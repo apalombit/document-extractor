@@ -1,17 +1,25 @@
 """LLM-based information extraction from OCR text"""
+import json
 from typing import Tuple, Dict
-# import ollama  # Uncomment when implementing
 from config import CONFIG
+from llm.ollama_provider import OllamaProvider
 
 
 class LLMExtractor:
-    def __init__(self):
-        """Initialize LLM extractor with prompts and config"""
+    def __init__(self, provider=None):
+        """
+        Initialize LLM extractor with prompts and config.
+
+        Args:
+            provider: LLM provider instance (defaults to OllamaProvider)
+        """
         self.model = CONFIG["llm"]["model"]
         self.temperature = CONFIG["llm"]["temperature"]
         self.max_tokens = CONFIG["llm"]["max_tokens"]
-        
-        # TODO: Load prompt templates
+
+        # Use provided provider or default to Ollama
+        self.provider = provider or OllamaProvider(self.model)
+
         self.system_prompt = self._load_system_prompt()
         self.task_prompts = self._load_task_prompts()
     
@@ -77,39 +85,63 @@ Classify the document text above."""
     def extract_field(self, ocr_text: str, task: str) -> Tuple[Dict, Dict]:
         """
         Extract specific field from document text.
-        
+
         Args:
             ocr_text: Raw text from OCR
             task: Field to extract ("author_date", "keywords", "document_type")
-        
+
         Returns:
             Tuple of (extraction_result, validation_flags)
             - extraction_result: Dict with extracted data or null values
             - validation_flags: Dict with confidence and grounding issues
         """
-        # TODO: Implement Ollama call
-        # prompt = {
-        #     "system": self.system_prompt.format(ocr_text=ocr_text),
-        #     "user": self.task_prompts[task]
-        # }
-        # response = ollama.generate(
-        #     model=self.model,
-        #     prompt=prompt,
-        #     temperature=self.temperature
-        # )
-        # result = json.loads(response)
-        # validation = self._validate_grounding(result, ocr_text)
-        # return result, validation
-        pass
+        if task not in self.task_prompts:
+            raise ValueError(f"Unknown task: {task}")
+
+        # Format prompts
+        system = self.system_prompt.format(ocr_text=ocr_text)
+        user = self.task_prompts[task]
+
+        # Generate response from LLM
+        try:
+            response = self.provider.generate(
+                system_prompt=system,
+                user_prompt=user,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
+            )
+
+            # Parse JSON response
+            result = json.loads(response)
+
+            # Validate grounding
+            validation = self._validate_grounding(result, ocr_text)
+
+            return result, validation
+
+        except json.JSONDecodeError as e:
+            # Return error state with low confidence
+            return {}, {
+                "valid_json": False,
+                "grounding_issues": [f"JSON parse error: {str(e)}"],
+                "confidence": "low"
+            }
+        except Exception as e:
+            # Catch other errors
+            return {}, {
+                "valid_json": False,
+                "grounding_issues": [f"Error: {str(e)}"],
+                "confidence": "low"
+            }
     
     def _validate_grounding(self, result: Dict, ocr_text: str) -> Dict:
         """
         Check if extracted values exist in source text.
-        
+
         Args:
             result: Extraction result dictionary
             ocr_text: Original OCR text
-            
+
         Returns:
             Validation flags dictionary with confidence and grounding issues
         """
@@ -118,11 +150,37 @@ Classify the document text above."""
             "grounding_issues": [],
             "confidence": "high"
         }
-        
-        # TODO: Implement grounding validation
-        # Check if extracted values appear in ocr_text
-        # Flag any values not found in source
-        
+
+        ocr_text_lower = ocr_text.lower()
+        issues = []
+
+        # Extract all string values from result recursively
+        def extract_strings(obj):
+            strings = []
+            if isinstance(obj, str):
+                strings.append(obj)
+            elif isinstance(obj, list):
+                for item in obj:
+                    strings.extend(extract_strings(item))
+            elif isinstance(obj, dict):
+                for value in obj.values():
+                    strings.extend(extract_strings(value))
+            return strings
+
+        extracted_values = extract_strings(result)
+
+        # Check each extracted value exists in OCR text
+        for value in extracted_values:
+            if value and isinstance(value, str) and len(value) > 2:
+                # Skip very short strings, check if value appears in text
+                if value.lower() not in ocr_text_lower:
+                    issues.append(f"'{value}' not found in source text")
+
+        # Update flags based on issues
+        if issues:
+            flags["grounding_issues"] = issues
+            flags["confidence"] = "low"
+
         return flags
     
     def extract_html(self, ocr_text: str) -> Dict:
