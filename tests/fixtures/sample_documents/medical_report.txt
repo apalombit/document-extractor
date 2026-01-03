@@ -1,0 +1,3 @@
+author_date: {'authors': ['Largo Agogtino Genelli'], 'date': '09/07/2009'}
+keywords: {'keywords': ['Ematocrito', 'Globuli Rosgi', 'Piastrine']}
+document_type: {'document_type': 'medical'}

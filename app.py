@@ -1,11 +1,50 @@
 """Streamlit UI for Document Extractor MVP"""
 import streamlit as st
 import tempfile
+import json
+import csv
+import io
 from pathlib import Path
+from io import BytesIO
+from pipeline.extraction_workflow import ExtractionWorkflow
 from utils.file_handler import FileHandler
-from ocr.engine import SelectedOCR
-from llm.extractor import LLMExtractor
 
+
+def display_task_results(task_name: str, task_label: str, icon: str, results: dict, validation: dict):
+    """
+    Display extraction results and validation for a single task.
+
+    Args:
+        task_name: Internal task name (e.g., "author_date")
+        task_label: Display label (e.g., "Author & Date")
+        icon: Emoji icon for the section
+        results: Extraction results for this task
+        validation: Validation flags for this task
+    """
+    st.subheader(f"{icon} {task_label}")
+
+    # Show extraction results
+    st.success("✅ Extraction completed")
+    st.json(results)
+
+    # Show validation status
+    is_valid = validation.get("confidence") == "high"
+    st.checkbox("Validated", value=is_valid, key=f"val_{task_name}", disabled=True)
+
+    # Show grounding issues if any
+    if validation.get("grounding_issues"):
+        with st.expander("⚠️ Validation Issues"):
+            st.error(f"**Confidence: {validation.get('confidence')}**")
+            st.write("**Issues found:**")
+            for issue in validation["grounding_issues"]:
+                st.warning(issue)
+            st.write("**Extracted values that failed grounding:**")
+            st.code(json.dumps(results, indent=2))
+
+    st.divider()
+
+
+# App title
 st.title("Document Analyzer")
 
 # File selection - two modes
@@ -30,7 +69,6 @@ else:
                 test_image_path = test_images_dir / selected_image
                 # Create a file-like object from the test image
                 with open(test_image_path, 'rb') as f:
-                    from io import BytesIO
                     uploaded_file = BytesIO(f.read())
                     uploaded_file.name = selected_image
         else:
@@ -43,289 +81,107 @@ if uploaded_file:
 
     if st.button("Analyze Document"):
         try:
-            # Validate file first
-            handler = FileHandler()
-            image = handler.load_image(uploaded_file)
-
-            # OCR Processing - save to temp file for OCR
-            with st.spinner("Extracting text..."):
-                # Save uploaded file to temporary location
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
-                    uploaded_file.seek(0)
-                    tmp_file.write(uploaded_file.read())
-                    tmp_path = tmp_file.name
-
-                try:
-                    ocr = SelectedOCR()
-                    ocr_text = ocr.extract_text(tmp_path)
-                finally:
-                    # Clean up temp file
-                    Path(tmp_path).unlink(missing_ok=True)
-            
-            with st.expander("Raw OCR Text"):
-                st.text(ocr_text)
-            
-            # LLM extraction
-            st.subheader("Extracted Information")
-            extractor = LLMExtractor()
-            results = {}
-            validation_flags = {}
-
-            # Author & Date
-            st.subheader("📄 Author & Date")
-            system_prompt = None
-            user_prompt = None
-            raw_response = None
-            error_info = None
+            # Save uploaded file to temporary location for processing
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                uploaded_file.seek(0)
+                tmp_file.write(uploaded_file.read())
+                tmp_path = tmp_file.name
 
             try:
-                task = "author_date"
-                with st.spinner("Extracting author and date..."):
-                    # Get prompts for debugging
-                    system_prompt = extractor.system_prompt.format(ocr_text=ocr_text)
-                    user_prompt = extractor.task_prompts[task]
+                # Run extraction workflow
+                workflow = ExtractionWorkflow()
 
-                    # Call LLM
-                    raw_response = extractor.provider.generate(
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                        temperature=extractor.temperature,
-                        max_tokens=extractor.max_tokens
+                with st.spinner("Processing document..."):
+                    workflow_results = workflow.process_document(tmp_path)
+
+                # Check for critical errors
+                if workflow_results["errors"]:
+                    st.error("❌ Errors occurred during processing:")
+                    for error in workflow_results["errors"]:
+                        st.error(error)
+
+                    with st.expander("🐛 Error Details"):
+                        st.code("\n".join(workflow_results["errors"]))
+
+                    # Still try to show partial results if available
+                    if not workflow_results["ocr_text"]:
+                        st.stop()  # Can't continue without OCR text
+
+                # Display OCR text
+                with st.expander("Raw OCR Text"):
+                    st.text(workflow_results["ocr_text"])
+
+                # Display extracted information
+                st.subheader("Extracted Information")
+
+                # Author & Date
+                if workflow_results["author_date"]:
+                    display_task_results(
+                        task_name="author_date",
+                        task_label="Author & Date",
+                        icon="📄",
+                        results=workflow_results["author_date"],
+                        validation=workflow_results["validation"]["author_date"]
                     )
 
-                    # Parse and validate
-                    import json
-                    results[task] = json.loads(raw_response)
-                    validation_flags[task] = extractor._validate_grounding(
-                        results[task], ocr_text, task
+                # Keywords
+                if workflow_results["keywords"]:
+                    display_task_results(
+                        task_name="keywords",
+                        task_label="Keywords",
+                        icon="🔑",
+                        results=workflow_results["keywords"],
+                        validation=workflow_results["validation"]["keywords"]
                     )
 
-                st.success("✅ Extraction completed")
-                st.json(results[task])
+                # Document Type
+                if workflow_results["document_type"]:
+                    display_task_results(
+                        task_name="document_type",
+                        task_label="Document Type",
+                        icon="📋",
+                        results=workflow_results["document_type"],
+                        validation=workflow_results["validation"]["document_type"]
+                    )
 
-                # Show validation status
-                is_valid = validation_flags[task]["confidence"] == "high"
-                st.checkbox("Validated", value=is_valid, key="val_author", disabled=True)
+                # Export options
+                st.divider()
+                st.subheader("Export Results")
 
-                # Show grounding issues if any
-                if validation_flags[task]["grounding_issues"]:
-                    with st.expander("⚠️ Validation Issues"):
-                        st.error(f"**Confidence: {validation_flags[task]['confidence']}**")
-                        st.write("**Issues found:**")
-                        for issue in validation_flags[task]["grounding_issues"]:
-                            st.warning(issue)
-                        st.write("**Extracted values that failed grounding:**")
-                        st.code(json.dumps(results[task], indent=2))
-
-            except Exception as e:
-                import traceback
-                error_info = {
-                    "error": str(e),
-                    "traceback": traceback.format_exc()
+                # Prepare results for export
+                export_results = {
+                    "author_date": workflow_results["author_date"],
+                    "keywords": workflow_results["keywords"],
+                    "document_type": workflow_results["document_type"]
                 }
-                st.error(f"❌ Extraction failed: {str(e)}")
 
-                with st.expander("🐛 Error Details"):
-                    st.code(error_info["traceback"])
-                    if raw_response is not None:
-                        st.write("**Raw LLM Response (before parsing):**")
-                        st.code(raw_response)
+                # Format text for copy
+                handler = FileHandler()
+                formatted_text = handler.format_for_copy(export_results)
+                st.text_area("Formatted Output", formatted_text, height=150)
 
-            # Debug: Show prompts and response (always show, even on error)
-            with st.expander("🔍 Debug: Prompts & Response"):
-                if system_prompt:
-                    st.write("**System Prompt:**")
-                    st.text_area("System", system_prompt, height=150, key="sys_author")
-                if user_prompt:
-                    st.write("**User Prompt:**")
-                    st.text_area("User", user_prompt, height=100, key="user_author")
-                if raw_response is not None:
-                    st.write("**Raw LLM Response:**")
-                    st.code(raw_response, language="json")
-                else:
-                    st.warning("No response received from LLM")
+                # CSV download button
+                csv_buffer = io.StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow(['Field', 'Value'])
+                for key, value in export_results.items():
+                    if isinstance(value, dict):
+                        writer.writerow([key, json.dumps(value)])
+                    elif isinstance(value, list):
+                        writer.writerow([key, ', '.join(map(str, value))])
+                    else:
+                        writer.writerow([key, value])
 
-            st.divider()
-            
-            # Keywords
-            st.subheader("🔑 Keywords")
-            system_prompt = None
-            user_prompt = None
-            raw_response = None
-            error_info = None
+                st.download_button(
+                    label="Download CSV",
+                    data=csv_buffer.getvalue(),
+                    file_name="extracted_data.csv",
+                    mime="text/csv"
+                )
 
-            try:
-                task = "keywords"
-                with st.spinner("Extracting keywords..."):
-                    # Get prompts for debugging
-                    system_prompt = extractor.system_prompt.format(ocr_text=ocr_text)
-                    user_prompt = extractor.task_prompts[task]
-
-                    # Call LLM
-                    raw_response = extractor.provider.generate(
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                        temperature=extractor.temperature,
-                        max_tokens=extractor.max_tokens
-                    )
-
-                    # Parse and validate
-                    results[task] = json.loads(raw_response)
-                    validation_flags[task] = extractor._validate_grounding(
-                        results[task], ocr_text, task
-                    )
-
-                st.success("✅ Extraction completed")
-                st.json(results[task])
-
-                # Show validation status
-                is_valid = validation_flags[task]["confidence"] == "high"
-                st.checkbox("Validated", value=is_valid, key="val_keywords", disabled=True)
-
-                # Show grounding issues if any
-                if validation_flags[task]["grounding_issues"]:
-                    with st.expander("⚠️ Validation Issues"):
-                        st.error(f"**Confidence: {validation_flags['keywords']['confidence']}**")
-                        st.write("**Issues found:**")
-                        for issue in validation_flags[task]["grounding_issues"]:
-                            st.warning(issue)
-                        st.write("**Extracted values that failed grounding:**")
-                        st.code(json.dumps(results[task], indent=2))
-
-            except Exception as e:
-                import traceback
-                error_info = {
-                    "error": str(e),
-                    "traceback": traceback.format_exc()
-                }
-                st.error(f"❌ Extraction failed: {str(e)}")
-
-                with st.expander("🐛 Error Details"):
-                    st.code(error_info["traceback"])
-                    if raw_response is not None:
-                        st.write("**Raw LLM Response (before parsing):**")
-                        st.code(raw_response)
-
-            # Debug: Show prompts and response (always show, even on error)
-            with st.expander("🔍 Debug: Prompts & Response"):
-                if system_prompt:
-                    st.write("**System Prompt:**")
-                    st.text_area("System", system_prompt, height=150, key="sys_keywords")
-                if user_prompt:
-                    st.write("**User Prompt:**")
-                    st.text_area("User", user_prompt, height=100, key="user_keywords")
-                if raw_response is not None:
-                    st.write("**Raw LLM Response:**")
-                    st.code(raw_response, language="json")
-                else:
-                    st.warning("No response received from LLM")
-
-            st.divider()
-            
-            # Document Type
-            st.subheader("📋 Document Type")
-            system_prompt = None
-            user_prompt = None
-            raw_response = None
-            error_info = None
-
-            try:
-                task = "document_type"
-                with st.spinner("Classifying document..."):
-                    # Get prompts for debugging
-                    system_prompt = extractor.system_prompt.format(ocr_text=ocr_text)
-                    user_prompt = extractor.task_prompts[task]
-
-                    # Call LLM
-                    raw_response = extractor.provider.generate(
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                        temperature=extractor.temperature,
-                        max_tokens=extractor.max_tokens
-                    )
-
-                    # Parse and validate
-                    results[task] = json.loads(raw_response)
-                    validation_flags[task] = extractor._validate_grounding(
-                        results[task], ocr_text, task
-                    )
-
-                st.success("✅ Extraction completed")
-                st.json(results[task])
-
-                # Show validation status
-                is_valid = validation_flags[task]["confidence"] == "high"
-                st.checkbox("Validated", value=is_valid, key="val_doctype", disabled=True)
-
-                # Show grounding issues if any
-                if validation_flags[task]["grounding_issues"]:
-                    with st.expander("⚠️ Validation Issues"):
-                        st.error(f"**Confidence: {validation_flags['document_type']['confidence']}**")
-                        st.write("**Issues found:**")
-                        for issue in validation_flags[task]["grounding_issues"]:
-                            st.warning(issue)
-                        st.write("**Extracted values that failed grounding:**")
-                        st.code(json.dumps(results[task], indent=2))
-
-            except Exception as e:
-                import traceback
-                error_info = {
-                    "error": str(e),
-                    "traceback": traceback.format_exc()
-                }
-                st.error(f"❌ Extraction failed: {str(e)}")
-
-                with st.expander("🐛 Error Details"):
-                    st.code(error_info["traceback"])
-                    if raw_response is not None:
-                        st.write("**Raw LLM Response (before parsing):**")
-                        st.code(raw_response)
-
-            # Debug: Show prompts and response (always show, even on error)
-            with st.expander("🔍 Debug: Prompts & Response"):
-                if system_prompt:
-                    st.write("**System Prompt:**")
-                    st.text_area("System", system_prompt, height=150, key="sys_doctype")
-                if user_prompt:
-                    st.write("**User Prompt:**")
-                    st.text_area("User", user_prompt, height=100, key="user_doctype")
-                if raw_response is not None:
-                    st.write("**Raw LLM Response:**")
-                    st.code(raw_response, language="json")
-                else:
-                    st.warning("No response received from LLM")
-
-            st.divider()
-            
-            # Export options
-            st.divider()
-            st.subheader("Export Results")
-
-            # Format text for copy
-            formatted_text = handler.format_for_copy(results)
-            st.text_area("Formatted Output", formatted_text, height=150)
-
-            # CSV download button
-            import csv
-            import io
-            csv_buffer = io.StringIO()
-            writer = csv.writer(csv_buffer)
-            writer.writerow(['Field', 'Value'])
-            for key, value in results.items():
-                if isinstance(value, dict):
-                    import json
-                    writer.writerow([key, json.dumps(value)])
-                elif isinstance(value, list):
-                    writer.writerow([key, ', '.join(map(str, value))])
-                else:
-                    writer.writerow([key, value])
-
-            st.download_button(
-                label="Download CSV",
-                data=csv_buffer.getvalue(),
-                file_name="extracted_data.csv",
-                mime="text/csv"
-            )
+            finally:
+                # Clean up temp file
+                Path(tmp_path).unlink(missing_ok=True)
 
         except Exception as e:
             import traceback

@@ -32,3 +32,22 @@ Paziente: Fernando
 Data di nascita: 1969
 Reparto: Spedalità Roma
 Data referto: 09/07/2009"""
+
+
+@pytest.fixture
+def e2e_test_cases():
+    """
+    Dynamically discover all PNG/TXT test case pairs in fixtures.
+
+    Returns:
+        List of tuples (png_path, txt_path) for parameterized tests
+    """
+    fixtures_dir = Path("tests/fixtures/sample_documents")
+    test_cases = []
+
+    for png_file in sorted(fixtures_dir.glob("*.png")):
+        txt_file = png_file.with_suffix(".txt")
+        if txt_file.exists():
+            test_cases.append((str(png_file), str(txt_file)))
+
+    return test_cases
