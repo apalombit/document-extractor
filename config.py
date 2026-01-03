@@ -2,8 +2,8 @@
 
 CONFIG = {
     "llm": {
-        "model": "llama3",
-        "temperature": 0.1,
+        "model": "llama3:8b",
+        "temperature": 0.0,
         "max_tokens": 500
     },
     "ocr": {

@@ -5,6 +5,10 @@ from config import CONFIG
 from llm.ollama_provider import OllamaProvider
 
 
+# Valid document types for classification validation
+VALID_DOCUMENT_TYPES = {"medical", "legal", "invoice", "receipt", "contract", "report", "letter", "form", "other"}
+
+
 class LLMExtractor:
     def __init__(self, provider=None):
         """
@@ -25,63 +29,107 @@ class LLMExtractor:
     
     def _load_system_prompt(self) -> str:
         """Load system prompt template"""
-        return """You are a document analysis assistant. Extract information ONLY from the provided text.
+        return """You are a document analysis assistant. Extract information ONLY from the provided DOCUMENT TEXT only to determine the REQUESTED INFORMATION.
 
-EXTRACTED DOCUMENT TEXT:
+DOCUMENT TEXT:
 {ocr_text}
 
 RULES:
-- Answer ONLY using information explicitly present in the text
-- If information is not clearly present, respond with null
-- Output must be valid JSON matching the provided schema
-- Never infer, assume, or add information not in the text"""
-    
+- Answer ONLY based on information explicitly present in the text
+- If information is not clearly present or you cannot answer based on text, respond with null
+- Never infer, assume, or add information not in the text
+- Your answer should ONLY be a JSON following provided schema in RESPONSE FORMAT with NO OTHER COMMENT added
+"""
+
     def _load_task_prompts(self) -> Dict[str, str]:
         """Load task-specific prompts"""
         return {
-            "author_date": """Extract document author(s) and date.
+"author_date": """REQUESTED INFORMATION: document author(s) and date.
+
+NOTE: author name(s) is the author (person or institution) that wrote or emitted the document from which the text was extracted, if not clear leave null.
+NOTE: date is the writing or emission date associated with the document from which the text was extracted, if not clear leave null.
+CRITICAL: both identified author names and date should be reported VERBATIM as in provided input text.
 
 EXAMPLES:
-Input: "Dr. Smith, 2023-05-10"
-Output: {"authors": ["Dr. Smith"], "date": "2023-05-10"}
+Input: "Dr. Smith wrote a report for exam referred to 2023 10th May"
+Output: {"authors": ["Dr. Smith"], "date": "2023 10th May"}
 
-SCHEMA:
+Input: "Report by Dr. Jones and Hospital San Raffaele dated 15/03/2024"
+Output: {"authors": ["Dr. Jones", "Hospital San Raffaele"], "date": "15/03/2024"}
+
+Input: "Medical record from Gemelli Hospital - March 2023"
+Output: {"authors": ["Gemelli Hospital"], "date": "March 2023"}
+
+Input: "Patient John Doe underwent blood test. No physician signature. Date not specified."
+Output: {"authors": null, "date": null}
+
+Input: "Test results for patient Maria Rossi"
+Output: {"authors": null, "date": null}
+
+RESPONSE FORMAT (JSON):
 {
-  "authors": ["string"] or null,
-  "date": "YYYY-MM-DD" or null
+  "authors": ["document authors found"] or null,
+  "date": "date" found or null
 }
+Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
+""",
 
-Extract from the document text above.""",
-            
-            "keywords": """Extract 3-5 content keywords representing main topics.
+"keywords": """REQUESTED INFORMATION: 2-4 content keywords representing main topics of this text.
+
+SELECTION CRITERIA:
+- Choose the most significant/specific nouns or concepts
+- Prioritize technical/domain-specific terms over common words
+- Extract keywords EXACTLY as they appear in text
+- Aim for 2-4 keywords; if text is too short/unclear, return null
 
 EXAMPLES:
-Input: Medical blood test with hemoglobin, glucose readings
-Output: {"keywords": ["blood test", "hemoglobin", "glucose", "medical results"]}
+Input: "Medical blood test with hemoglobin, glucose readings indicate normal situation as of 2023 10th May"
+Output: {"keywords": ["blood", "hemoglobin", "glucose"]}
 
-SCHEMA:
+Input: "Legal contract for property transfer between parties. Confidential agreement signed on 2024."
+Output: {"keywords": ["legal", "contract", "property", "transfer", "agreement"]}
+
+Input: "Hello"
+Output: {"keywords": null}
+
+Input: "This is a document with some text and other things here."
+Output: {"keywords": null}
+
+RESPONSE FORMAT (JSON):
 {
-  "keywords": ["string"] or null
+  "keywords": ["2-4 specific terms from text"] or null
 }
+Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
+""",
 
-Extract from the document text above.""",
-            
-            "document_type": """Classify document type.
+"document_type": """REQUESTED INFORMATION: document type.
 
 VALID TYPES: medical, legal, invoice, receipt, contract, report, letter, form, other
 
 EXAMPLES:
-Input: Blood test results from hospital
+Input: "Blood test results from hospital"
 Output: {"document_type": "medical"}
 
-SCHEMA:
+Input: "Agreement between parties for service delivery signed on March 2024"
+Output: {"document_type": "contract"}
+
+Input: "Invoice #12345 - Payment due: €500.00 - Services rendered"
+Output: {"document_type": "invoice"}
+
+Input: "Some random text fragments without clear purpose or structure"
+Output: {"document_type": null}
+
+Input: "Unclear content"
+Output: {"document_type": null}
+
+RESPONSE FORMAT (JSON):
 {
-  "document_type": "string" or null
+  "document_type": "one of the VALID TYPES" or null
+}
+Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
+"""
 }
 
-Classify the document text above."""
-        }
-    
     def extract_field(self, ocr_text: str, task: str) -> Tuple[Dict, Dict]:
         """
         Extract specific field from document text.
@@ -115,7 +163,7 @@ Classify the document text above."""
             result = json.loads(response)
 
             # Validate grounding
-            validation = self._validate_grounding(result, ocr_text)
+            validation = self._validate_grounding(result, ocr_text, task)
 
             return result, validation
 
@@ -134,13 +182,14 @@ Classify the document text above."""
                 "confidence": "low"
             }
     
-    def _validate_grounding(self, result: Dict, ocr_text: str) -> Dict:
+    def _validate_grounding(self, result: Dict, ocr_text: str, task: str) -> Dict:
         """
-        Check if extracted values exist in source text.
+        Check if extracted values are valid based on task type.
 
         Args:
             result: Extraction result dictionary
             ocr_text: Original OCR text
+            task: Task name ("author_date", "keywords", "document_type")
 
         Returns:
             Validation flags dictionary with confidence and grounding issues
@@ -151,30 +200,40 @@ Classify the document text above."""
             "confidence": "high"
         }
 
-        ocr_text_lower = ocr_text.lower()
         issues = []
 
-        # Extract all string values from result recursively
-        def extract_strings(obj):
-            strings = []
-            if isinstance(obj, str):
-                strings.append(obj)
-            elif isinstance(obj, list):
-                for item in obj:
-                    strings.extend(extract_strings(item))
-            elif isinstance(obj, dict):
-                for value in obj.values():
-                    strings.extend(extract_strings(value))
-            return strings
+        # Task-specific validation
+        if task == "document_type":
+            # For classification: validate against valid types
+            if "document_type" in result:
+                doc_type = result["document_type"]
+                if doc_type is not None and doc_type not in VALID_DOCUMENT_TYPES:
+                    issues.append(f"'{doc_type}' is not a valid document type. Valid types: {', '.join(sorted(VALID_DOCUMENT_TYPES))}")
+        else:
+            # For extraction tasks (author_date, keywords): validate grounding in OCR text
+            ocr_text_lower = ocr_text.lower()
 
-        extracted_values = extract_strings(result)
+            # Extract all string values from result recursively
+            def extract_strings(obj):
+                strings = []
+                if isinstance(obj, str):
+                    strings.append(obj)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        strings.extend(extract_strings(item))
+                elif isinstance(obj, dict):
+                    for value in obj.values():
+                        strings.extend(extract_strings(value))
+                return strings
 
-        # Check each extracted value exists in OCR text
-        for value in extracted_values:
-            if value and isinstance(value, str) and len(value) > 2:
-                # Skip very short strings, check if value appears in text
-                if value.lower() not in ocr_text_lower:
-                    issues.append(f"'{value}' not found in source text")
+            extracted_values = extract_strings(result)
+
+            # Check each extracted value exists in OCR text
+            for value in extracted_values:
+                if value and isinstance(value, str) and len(value) > 2:
+                    # Skip very short strings, check if value appears in text
+                    if value.lower() not in ocr_text_lower:
+                        issues.append(f"'{value}' not found in source text")
 
         # Update flags based on issues
         if issues:

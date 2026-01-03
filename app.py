@@ -10,7 +10,9 @@ st.title("Document Analyzer")
 
 # File selection - two modes
 st.subheader("1. Select Document")
-source_mode = st.radio("Document Source:", ["Upload File", "Use Test Image"], horizontal=True)
+source_mode = st.radio("Document Source:",
+                       ["Use Test Image", "Upload File"],
+                       horizontal=True)
 
 uploaded_file = None
 
@@ -77,10 +79,11 @@ if uploaded_file:
             error_info = None
 
             try:
+                task = "author_date"
                 with st.spinner("Extracting author and date..."):
                     # Get prompts for debugging
                     system_prompt = extractor.system_prompt.format(ocr_text=ocr_text)
-                    user_prompt = extractor.task_prompts["author_date"]
+                    user_prompt = extractor.task_prompts[task]
 
                     # Call LLM
                     raw_response = extractor.provider.generate(
@@ -92,27 +95,27 @@ if uploaded_file:
 
                     # Parse and validate
                     import json
-                    results["author_date"] = json.loads(raw_response)
-                    validation_flags["author_date"] = extractor._validate_grounding(
-                        results["author_date"], ocr_text
+                    results[task] = json.loads(raw_response)
+                    validation_flags[task] = extractor._validate_grounding(
+                        results[task], ocr_text, task
                     )
 
                 st.success("✅ Extraction completed")
-                st.json(results["author_date"])
+                st.json(results[task])
 
                 # Show validation status
-                is_valid = validation_flags["author_date"]["confidence"] == "high"
+                is_valid = validation_flags[task]["confidence"] == "high"
                 st.checkbox("Validated", value=is_valid, key="val_author", disabled=True)
 
                 # Show grounding issues if any
-                if validation_flags["author_date"]["grounding_issues"]:
+                if validation_flags[task]["grounding_issues"]:
                     with st.expander("⚠️ Validation Issues"):
-                        st.error(f"**Confidence: {validation_flags['author_date']['confidence']}**")
+                        st.error(f"**Confidence: {validation_flags[task]['confidence']}**")
                         st.write("**Issues found:**")
-                        for issue in validation_flags["author_date"]["grounding_issues"]:
+                        for issue in validation_flags[task]["grounding_issues"]:
                             st.warning(issue)
                         st.write("**Extracted values that failed grounding:**")
-                        st.code(json.dumps(results["author_date"], indent=2))
+                        st.code(json.dumps(results[task], indent=2))
 
             except Exception as e:
                 import traceback
@@ -152,10 +155,11 @@ if uploaded_file:
             error_info = None
 
             try:
+                task = "keywords"
                 with st.spinner("Extracting keywords..."):
                     # Get prompts for debugging
                     system_prompt = extractor.system_prompt.format(ocr_text=ocr_text)
-                    user_prompt = extractor.task_prompts["keywords"]
+                    user_prompt = extractor.task_prompts[task]
 
                     # Call LLM
                     raw_response = extractor.provider.generate(
@@ -166,27 +170,27 @@ if uploaded_file:
                     )
 
                     # Parse and validate
-                    results["keywords"] = json.loads(raw_response)
-                    validation_flags["keywords"] = extractor._validate_grounding(
-                        results["keywords"], ocr_text
+                    results[task] = json.loads(raw_response)
+                    validation_flags[task] = extractor._validate_grounding(
+                        results[task], ocr_text, task
                     )
 
                 st.success("✅ Extraction completed")
-                st.json(results["keywords"])
+                st.json(results[task])
 
                 # Show validation status
-                is_valid = validation_flags["keywords"]["confidence"] == "high"
+                is_valid = validation_flags[task]["confidence"] == "high"
                 st.checkbox("Validated", value=is_valid, key="val_keywords", disabled=True)
 
                 # Show grounding issues if any
-                if validation_flags["keywords"]["grounding_issues"]:
+                if validation_flags[task]["grounding_issues"]:
                     with st.expander("⚠️ Validation Issues"):
                         st.error(f"**Confidence: {validation_flags['keywords']['confidence']}**")
                         st.write("**Issues found:**")
-                        for issue in validation_flags["keywords"]["grounding_issues"]:
+                        for issue in validation_flags[task]["grounding_issues"]:
                             st.warning(issue)
                         st.write("**Extracted values that failed grounding:**")
-                        st.code(json.dumps(results["keywords"], indent=2))
+                        st.code(json.dumps(results[task], indent=2))
 
             except Exception as e:
                 import traceback
@@ -226,10 +230,11 @@ if uploaded_file:
             error_info = None
 
             try:
+                task = "document_type"
                 with st.spinner("Classifying document..."):
                     # Get prompts for debugging
                     system_prompt = extractor.system_prompt.format(ocr_text=ocr_text)
-                    user_prompt = extractor.task_prompts["document_type"]
+                    user_prompt = extractor.task_prompts[task]
 
                     # Call LLM
                     raw_response = extractor.provider.generate(
@@ -240,27 +245,27 @@ if uploaded_file:
                     )
 
                     # Parse and validate
-                    results["document_type"] = json.loads(raw_response)
-                    validation_flags["document_type"] = extractor._validate_grounding(
-                        results["document_type"], ocr_text
+                    results[task] = json.loads(raw_response)
+                    validation_flags[task] = extractor._validate_grounding(
+                        results[task], ocr_text, task
                     )
 
                 st.success("✅ Extraction completed")
-                st.json(results["document_type"])
+                st.json(results[task])
 
                 # Show validation status
-                is_valid = validation_flags["document_type"]["confidence"] == "high"
+                is_valid = validation_flags[task]["confidence"] == "high"
                 st.checkbox("Validated", value=is_valid, key="val_doctype", disabled=True)
 
                 # Show grounding issues if any
-                if validation_flags["document_type"]["grounding_issues"]:
+                if validation_flags[task]["grounding_issues"]:
                     with st.expander("⚠️ Validation Issues"):
                         st.error(f"**Confidence: {validation_flags['document_type']['confidence']}**")
                         st.write("**Issues found:**")
-                        for issue in validation_flags["document_type"]["grounding_issues"]:
+                        for issue in validation_flags[task]["grounding_issues"]:
                             st.warning(issue)
                         st.write("**Extracted values that failed grounding:**")
-                        st.code(json.dumps(results["document_type"], indent=2))
+                        st.code(json.dumps(results[task], indent=2))
 
             except Exception as e:
                 import traceback
