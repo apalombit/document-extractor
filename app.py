@@ -8,10 +8,6 @@ from llm.extractor import LLMExtractor
 
 st.title("Document Analyzer")
 
-# Error tracking
-if 'errors' not in st.session_state:
-    st.session_state.errors = []
-
 # File selection - two modes
 st.subheader("1. Select Document")
 source_mode = st.radio("Document Source:", ["Upload File", "Use Test Image"], horizontal=True)
@@ -44,8 +40,6 @@ if uploaded_file:
     st.image(uploaded_file, caption="Document Preview", width=300)
 
     if st.button("Analyze Document"):
-        st.session_state.errors = []  # Reset errors
-
         try:
             # Validate file first
             handler = FileHandler()
@@ -76,6 +70,12 @@ if uploaded_file:
             validation_flags = {}
 
             # Author & Date
+            st.subheader("📄 Author & Date")
+            system_prompt = None
+            user_prompt = None
+            raw_response = None
+            error_info = None
+
             try:
                 with st.spinner("Extracting author and date..."):
                     # Get prompts for debugging
@@ -97,7 +97,7 @@ if uploaded_file:
                         results["author_date"], ocr_text
                     )
 
-                st.success("Author & Date")
+                st.success("✅ Extraction completed")
                 st.json(results["author_date"])
 
                 # Show validation status
@@ -114,18 +114,43 @@ if uploaded_file:
                         st.write("**Extracted values that failed grounding:**")
                         st.code(json.dumps(results["author_date"], indent=2))
 
-                # Debug: Show prompts and response
-                with st.expander("🔍 Debug: Prompts & Response"):
+            except Exception as e:
+                import traceback
+                error_info = {
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
+                }
+                st.error(f"❌ Extraction failed: {str(e)}")
+
+                with st.expander("🐛 Error Details"):
+                    st.code(error_info["traceback"])
+                    if raw_response is not None:
+                        st.write("**Raw LLM Response (before parsing):**")
+                        st.code(raw_response)
+
+            # Debug: Show prompts and response (always show, even on error)
+            with st.expander("🔍 Debug: Prompts & Response"):
+                if system_prompt:
                     st.write("**System Prompt:**")
                     st.text_area("System", system_prompt, height=150, key="sys_author")
+                if user_prompt:
                     st.write("**User Prompt:**")
                     st.text_area("User", user_prompt, height=100, key="user_author")
+                if raw_response is not None:
                     st.write("**Raw LLM Response:**")
                     st.code(raw_response, language="json")
-            except Exception as e:
-                st.session_state.errors.append(f"Author/Date: {str(e)}")
+                else:
+                    st.warning("No response received from LLM")
+
+            st.divider()
             
             # Keywords
+            st.subheader("🔑 Keywords")
+            system_prompt = None
+            user_prompt = None
+            raw_response = None
+            error_info = None
+
             try:
                 with st.spinner("Extracting keywords..."):
                     # Get prompts for debugging
@@ -146,7 +171,7 @@ if uploaded_file:
                         results["keywords"], ocr_text
                     )
 
-                st.success("Keywords")
+                st.success("✅ Extraction completed")
                 st.json(results["keywords"])
 
                 # Show validation status
@@ -163,18 +188,43 @@ if uploaded_file:
                         st.write("**Extracted values that failed grounding:**")
                         st.code(json.dumps(results["keywords"], indent=2))
 
-                # Debug: Show prompts and response
-                with st.expander("🔍 Debug: Prompts & Response"):
+            except Exception as e:
+                import traceback
+                error_info = {
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
+                }
+                st.error(f"❌ Extraction failed: {str(e)}")
+
+                with st.expander("🐛 Error Details"):
+                    st.code(error_info["traceback"])
+                    if raw_response is not None:
+                        st.write("**Raw LLM Response (before parsing):**")
+                        st.code(raw_response)
+
+            # Debug: Show prompts and response (always show, even on error)
+            with st.expander("🔍 Debug: Prompts & Response"):
+                if system_prompt:
                     st.write("**System Prompt:**")
                     st.text_area("System", system_prompt, height=150, key="sys_keywords")
+                if user_prompt:
                     st.write("**User Prompt:**")
                     st.text_area("User", user_prompt, height=100, key="user_keywords")
+                if raw_response is not None:
                     st.write("**Raw LLM Response:**")
                     st.code(raw_response, language="json")
-            except Exception as e:
-                st.session_state.errors.append(f"Keywords: {str(e)}")
+                else:
+                    st.warning("No response received from LLM")
+
+            st.divider()
             
             # Document Type
+            st.subheader("📋 Document Type")
+            system_prompt = None
+            user_prompt = None
+            raw_response = None
+            error_info = None
+
             try:
                 with st.spinner("Classifying document..."):
                     # Get prompts for debugging
@@ -195,7 +245,7 @@ if uploaded_file:
                         results["document_type"], ocr_text
                     )
 
-                st.success("Document Type")
+                st.success("✅ Extraction completed")
                 st.json(results["document_type"])
 
                 # Show validation status
@@ -212,16 +262,35 @@ if uploaded_file:
                         st.write("**Extracted values that failed grounding:**")
                         st.code(json.dumps(results["document_type"], indent=2))
 
-                # Debug: Show prompts and response
-                with st.expander("🔍 Debug: Prompts & Response"):
+            except Exception as e:
+                import traceback
+                error_info = {
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
+                }
+                st.error(f"❌ Extraction failed: {str(e)}")
+
+                with st.expander("🐛 Error Details"):
+                    st.code(error_info["traceback"])
+                    if raw_response is not None:
+                        st.write("**Raw LLM Response (before parsing):**")
+                        st.code(raw_response)
+
+            # Debug: Show prompts and response (always show, even on error)
+            with st.expander("🔍 Debug: Prompts & Response"):
+                if system_prompt:
                     st.write("**System Prompt:**")
                     st.text_area("System", system_prompt, height=150, key="sys_doctype")
+                if user_prompt:
                     st.write("**User Prompt:**")
                     st.text_area("User", user_prompt, height=100, key="user_doctype")
+                if raw_response is not None:
                     st.write("**Raw LLM Response:**")
                     st.code(raw_response, language="json")
-            except Exception as e:
-                st.session_state.errors.append(f"Document Type: {str(e)}")
+                else:
+                    st.warning("No response received from LLM")
+
+            st.divider()
             
             # Export options
             st.divider()
@@ -252,12 +321,9 @@ if uploaded_file:
                 file_name="extracted_data.csv",
                 mime="text/csv"
             )
-                    
-        except Exception as e:
-            st.session_state.errors.append(f"Critical error: {str(e)}")
 
-# Error tab
-if st.session_state.errors:
-    with st.expander("⚠️ Errors", expanded=True):
-        for error in st.session_state.errors:
-            st.error(error)
+        except Exception as e:
+            import traceback
+            st.error(f"❌ Critical error: {str(e)}")
+            with st.expander("🐛 Critical Error Details"):
+                st.code(traceback.format_exc())
