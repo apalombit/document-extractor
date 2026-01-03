@@ -12,8 +12,33 @@ st.title("Document Analyzer")
 if 'errors' not in st.session_state:
     st.session_state.errors = []
 
-# File selection
-uploaded_file = st.file_uploader("Select document", type=['png'])
+# File selection - two modes
+st.subheader("1. Select Document")
+source_mode = st.radio("Document Source:", ["Upload File", "Use Test Image"], horizontal=True)
+
+uploaded_file = None
+
+if source_mode == "Upload File":
+    uploaded_file = st.file_uploader("Select document", type=['png'])
+else:
+    # List test images from fixtures
+    test_images_dir = Path("tests/fixtures/sample_documents")
+    if test_images_dir.exists():
+        test_images = list(test_images_dir.glob("*.png"))
+        if test_images:
+            test_image_names = [img.name for img in test_images]
+            selected_image = st.selectbox("Choose test image:", test_image_names)
+            if selected_image:
+                test_image_path = test_images_dir / selected_image
+                # Create a file-like object from the test image
+                with open(test_image_path, 'rb') as f:
+                    from io import BytesIO
+                    uploaded_file = BytesIO(f.read())
+                    uploaded_file.name = selected_image
+        else:
+            st.warning("No test images found in tests/fixtures/sample_documents/")
+    else:
+        st.error("Test images directory not found: tests/fixtures/sample_documents/")
 
 if uploaded_file:
     st.image(uploaded_file, caption="Document Preview", width=300)
@@ -49,12 +74,29 @@ if uploaded_file:
             extractor = LLMExtractor()
             results = {}
             validation_flags = {}
-            
+
             # Author & Date
             try:
                 with st.spinner("Extracting author and date..."):
-                    results["author_date"], validation_flags["author_date"] = \
-                        extractor.extract_field(ocr_text, "author_date")
+                    # Get prompts for debugging
+                    system_prompt = extractor.system_prompt.format(ocr_text=ocr_text)
+                    user_prompt = extractor.task_prompts["author_date"]
+
+                    # Call LLM
+                    raw_response = extractor.provider.generate(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        temperature=extractor.temperature,
+                        max_tokens=extractor.max_tokens
+                    )
+
+                    # Parse and validate
+                    import json
+                    results["author_date"] = json.loads(raw_response)
+                    validation_flags["author_date"] = extractor._validate_grounding(
+                        results["author_date"], ocr_text
+                    )
+
                 st.success("Author & Date")
                 st.json(results["author_date"])
 
@@ -65,16 +107,45 @@ if uploaded_file:
                 # Show grounding issues if any
                 if validation_flags["author_date"]["grounding_issues"]:
                     with st.expander("⚠️ Validation Issues"):
+                        st.error(f"**Confidence: {validation_flags['author_date']['confidence']}**")
+                        st.write("**Issues found:**")
                         for issue in validation_flags["author_date"]["grounding_issues"]:
                             st.warning(issue)
+                        st.write("**Extracted values that failed grounding:**")
+                        st.code(json.dumps(results["author_date"], indent=2))
+
+                # Debug: Show prompts and response
+                with st.expander("🔍 Debug: Prompts & Response"):
+                    st.write("**System Prompt:**")
+                    st.text_area("System", system_prompt, height=150, key="sys_author")
+                    st.write("**User Prompt:**")
+                    st.text_area("User", user_prompt, height=100, key="user_author")
+                    st.write("**Raw LLM Response:**")
+                    st.code(raw_response, language="json")
             except Exception as e:
                 st.session_state.errors.append(f"Author/Date: {str(e)}")
             
             # Keywords
             try:
                 with st.spinner("Extracting keywords..."):
-                    results["keywords"], validation_flags["keywords"] = \
-                        extractor.extract_field(ocr_text, "keywords")
+                    # Get prompts for debugging
+                    system_prompt = extractor.system_prompt.format(ocr_text=ocr_text)
+                    user_prompt = extractor.task_prompts["keywords"]
+
+                    # Call LLM
+                    raw_response = extractor.provider.generate(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        temperature=extractor.temperature,
+                        max_tokens=extractor.max_tokens
+                    )
+
+                    # Parse and validate
+                    results["keywords"] = json.loads(raw_response)
+                    validation_flags["keywords"] = extractor._validate_grounding(
+                        results["keywords"], ocr_text
+                    )
+
                 st.success("Keywords")
                 st.json(results["keywords"])
 
@@ -85,16 +156,45 @@ if uploaded_file:
                 # Show grounding issues if any
                 if validation_flags["keywords"]["grounding_issues"]:
                     with st.expander("⚠️ Validation Issues"):
+                        st.error(f"**Confidence: {validation_flags['keywords']['confidence']}**")
+                        st.write("**Issues found:**")
                         for issue in validation_flags["keywords"]["grounding_issues"]:
                             st.warning(issue)
+                        st.write("**Extracted values that failed grounding:**")
+                        st.code(json.dumps(results["keywords"], indent=2))
+
+                # Debug: Show prompts and response
+                with st.expander("🔍 Debug: Prompts & Response"):
+                    st.write("**System Prompt:**")
+                    st.text_area("System", system_prompt, height=150, key="sys_keywords")
+                    st.write("**User Prompt:**")
+                    st.text_area("User", user_prompt, height=100, key="user_keywords")
+                    st.write("**Raw LLM Response:**")
+                    st.code(raw_response, language="json")
             except Exception as e:
                 st.session_state.errors.append(f"Keywords: {str(e)}")
             
             # Document Type
             try:
                 with st.spinner("Classifying document..."):
-                    results["document_type"], validation_flags["document_type"] = \
-                        extractor.extract_field(ocr_text, "document_type")
+                    # Get prompts for debugging
+                    system_prompt = extractor.system_prompt.format(ocr_text=ocr_text)
+                    user_prompt = extractor.task_prompts["document_type"]
+
+                    # Call LLM
+                    raw_response = extractor.provider.generate(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        temperature=extractor.temperature,
+                        max_tokens=extractor.max_tokens
+                    )
+
+                    # Parse and validate
+                    results["document_type"] = json.loads(raw_response)
+                    validation_flags["document_type"] = extractor._validate_grounding(
+                        results["document_type"], ocr_text
+                    )
+
                 st.success("Document Type")
                 st.json(results["document_type"])
 
@@ -105,8 +205,21 @@ if uploaded_file:
                 # Show grounding issues if any
                 if validation_flags["document_type"]["grounding_issues"]:
                     with st.expander("⚠️ Validation Issues"):
+                        st.error(f"**Confidence: {validation_flags['document_type']['confidence']}**")
+                        st.write("**Issues found:**")
                         for issue in validation_flags["document_type"]["grounding_issues"]:
                             st.warning(issue)
+                        st.write("**Extracted values that failed grounding:**")
+                        st.code(json.dumps(results["document_type"], indent=2))
+
+                # Debug: Show prompts and response
+                with st.expander("🔍 Debug: Prompts & Response"):
+                    st.write("**System Prompt:**")
+                    st.text_area("System", system_prompt, height=150, key="sys_doctype")
+                    st.write("**User Prompt:**")
+                    st.text_area("User", user_prompt, height=100, key="user_doctype")
+                    st.write("**Raw LLM Response:**")
+                    st.code(raw_response, language="json")
             except Exception as e:
                 st.session_state.errors.append(f"Document Type: {str(e)}")
             

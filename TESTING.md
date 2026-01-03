@@ -15,28 +15,55 @@
 
 3. The app should open in your browser at `http://localhost:8501`
 
+## New Debugging Features
+
+The UI now includes enhanced troubleshooting tools:
+
+### 1. Test Image Selector
+- Select "Use Test Image" radio button
+- Choose from available test images in dropdown (from `tests/fixtures/sample_documents/`)
+- No need to drag & drop files manually
+
+### 2. Debug: Prompts & Response
+Each extraction task includes a "🔍 Debug: Prompts & Response" expandable section showing:
+- **System Prompt**: The full system prompt sent to LLM (including OCR text)
+- **User Prompt**: The task-specific prompt with examples and schema
+- **Raw LLM Response**: The exact JSON response from Ollama before parsing
+
+### 3. Enhanced Validation Issues
+When grounding check fails, the "⚠️ Validation Issues" section now shows:
+- **Confidence level**: High or Low
+- **Specific issues**: Which extracted values were not found in source text
+- **Failed values**: The complete extracted data structure that failed validation
+
 ## Test Cases
 
 ### Test Case 1: Happy Path - Valid Medical Document ✅
 
 **Steps:**
-1. Upload `tests/fixtures/sample_documents/medical_report.png`
-2. Verify image preview displays correctly
-3. Click "Analyze Document"
-4. Wait for OCR processing
-5. Verify raw OCR text appears in expandable section
-6. Wait for 3 LLM extraction tasks (author_date, keywords, document_type)
-7. Verify JSON results display for each task
-8. Check validation checkboxes show confidence level
-9. Check if any "⚠️ Validation Issues" expanders appear
-10. Verify formatted output appears in text area
-11. Click "Download CSV" button to test CSV export
-12. Verify no errors in "⚠️ Errors" section at bottom
+1. Select "Use Test Image" radio button
+2. Choose "medical_report.png" from dropdown
+3. Verify image preview displays correctly
+4. Click "Analyze Document"
+5. Wait for OCR processing
+6. Verify raw OCR text appears in expandable section
+7. Wait for 3 LLM extraction tasks (author_date, keywords, document_type)
+8. Verify JSON results display for each task
+9. Check validation checkboxes show confidence level
+10. Expand "🔍 Debug: Prompts & Response" for each task to inspect:
+    - System prompt includes OCR text
+    - User prompt has task-specific instructions
+    - Raw LLM response is valid JSON
+11. Check if any "⚠️ Validation Issues" expanders appear
+12. Verify formatted output appears in text area
+13. Click "Download CSV" button to test CSV export
+14. Verify no errors in "⚠️ Errors" section at bottom
 
 **Expected Results:**
 - All extraction tasks complete successfully
 - High confidence validation (checkboxes checked)
-- No validation issues
+- No validation issues (or minimal issues)
+- Debug sections show complete prompt chain
 - Clean export functionality
 
 ---
