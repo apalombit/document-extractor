@@ -8,6 +8,29 @@ from llm.ollama_provider import OllamaProvider
 # Valid document types for classification validation
 VALID_DOCUMENT_TYPES = {"medical", "legal", "invoice", "receipt", "contract", "report", "letter", "form", "other"}
 
+# Critique prompt for self-review step
+CRITIQUE_PROMPT = """Review your previous extraction answer for potential flaws or inconsistencies.
+
+YOUR PREVIOUS ANSWER:
+{previous_answer}
+
+ORIGINAL TASK:
+{task_description}
+
+CRITIQUE INSTRUCTIONS:
+1. Check if extracted values truly exist in the source document text
+2. Verify dates are realistic and properly formatted
+3. Ensure authors/keywords are specific entities (not generic terms)
+4. Confirm document type classification makes sense for the content
+5. Look for any logical inconsistencies
+
+RESPONSE OPTIONS:
+A) If you find issues, provide an IMPROVED answer in the same JSON format
+B) If your answer is already correct, return it unchanged
+
+Output ONLY the JSON (improved or unchanged) with NO OTHER COMMENT.
+"""
+
 
 class LLMExtractor:
     def __init__(self, provider=None):
@@ -40,6 +63,33 @@ RULES:
 - Never infer, assume, or add information not in the text
 - Your answer should ONLY be a JSON following provided schema in RESPONSE FORMAT with NO OTHER COMMENT added
 """
+
+    def _get_system_prompt_with_tools(self, ocr_text: str) -> str:
+        """
+        Create system prompt with tool availability information.
+
+        Args:
+            ocr_text: OCR text to include in prompt
+
+        Returns:
+            System prompt string with tool instructions
+        """
+        base = self.system_prompt.format(ocr_text=ocr_text)
+
+        tool_info = """
+
+AVAILABLE TOOLS:
+- validate_date(date_string): Validates that a date exists and is not in the future.
+  Use this to verify any dates you extract from the document.
+  Returns: {"valid": bool, "reason": str, "normalized": str}
+
+TOOL USAGE INSTRUCTIONS:
+- After extracting a date, call validate_date to verify it
+- If validation fails (valid=False), reconsider your extraction or set date to null
+- Use the normalized format from the tool if provided
+"""
+
+        return base + tool_info
 
     def _load_task_prompts(self) -> Dict[str, str]:
         """Load task-specific prompts"""
@@ -132,7 +182,7 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
 
     def extract_field(self, ocr_text: str, task: str) -> Tuple[Dict, Dict]:
         """
-        Extract specific field from document text.
+        Extract specific field from document text using multi-turn conversation with tool support.
 
         Args:
             ocr_text: Raw text from OCR
@@ -146,26 +196,94 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
         if task not in self.task_prompts:
             raise ValueError(f"Unknown task: {task}")
 
-        # Format prompts
-        system = self.system_prompt.format(ocr_text=ocr_text)
+        # Reset conversation for fresh extraction
+        self.provider.reset_conversation()
+
+        # Format prompts (use tool-aware system prompt for author_date task)
+        if task == "author_date":
+            system = self._get_system_prompt_with_tools(ocr_text)
+        else:
+            system = self.system_prompt.format(ocr_text=ocr_text)
+
         user = self.task_prompts[task]
 
-        # Generate response from LLM
+        # Import tools for author_date task
+        tools = None
+        use_tools = task == "author_date"
+        if use_tools:
+            from llm.tools import validate_date
+            tools = [validate_date]
+
+        # Multi-turn conversation loop
+        max_turns = CONFIG["llm"]["max_conversation_turns"]
+        turn = 0
+        tool_support_error = False
+
         try:
-            response = self.provider.generate(
-                system_prompt=system,
-                user_prompt=user,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
+            while turn < max_turns:
+                # Generate response from LLM
+                try:
+                    response = self.provider.generate(
+                        system_prompt=system,
+                        user_prompt=user if turn == 0 else "",  # Only send user prompt on first turn
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens,
+                        tools=tools if not tool_support_error else None  # Disable tools if not supported
+                    )
+                except Exception as e:
+                    # Check if error is due to tool support
+                    error_msg = str(e).lower()
+                    if "does not support tools" in error_msg or "tool" in error_msg and "400" in error_msg:
+                        # Model doesn't support tools - retry without tools
+                        tool_support_error = True
+                        tools = None
+                        # Reset conversation and use non-tool system prompt
+                        self.provider.reset_conversation()
+                        system = self.system_prompt.format(ocr_text=ocr_text)
+                        turn = 0
+                        continue
+                    else:
+                        # Re-raise other errors
+                        raise
 
-            # Parse JSON response
-            result = json.loads(response)
+                if response["type"] == "tool_call":
+                    # Execute tools and add results to conversation
+                    for tool_call in response["tool_calls"]:
+                        if tool_call['function']['name'] == "validate_date":
+                            # Parse arguments (handle both string and dict formats)
+                            arguments = tool_call['function']['arguments']
+                            if isinstance(arguments, str):
+                                args = json.loads(arguments)
+                            else:
+                                args = arguments  # Already a dict
 
-            # Validate grounding
-            validation = self._validate_grounding(result, ocr_text, task)
+                            from llm.tools import validate_date
+                            result = validate_date(args['date_string'])
+                            self.provider.add_tool_result("validate_date", result)
+                            break  # Only execute first tool call to prevent loops
 
-            return result, validation
+                    # Disable tools after first call to prevent infinite loops
+                    tools = None
+                    turn += 1
+                else:
+                    # Got final text response
+                    # Parse JSON response
+                    result = json.loads(response["content"])
+
+                    # Apply optional critique step
+                    result = self._apply_critique_step(result, ocr_text, task)
+
+                    # Validate grounding
+                    validation = self._validate_grounding(result, ocr_text, task)
+
+                    return result, validation
+
+            # Max turns exceeded
+            return {}, {
+                "valid_json": False,
+                "grounding_issues": ["Max conversation turns exceeded"],
+                "confidence": "low"
+            }
 
         except json.JSONDecodeError as e:
             # Return error state with low confidence
@@ -241,7 +359,57 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
             flags["confidence"] = "low"
 
         return flags
-    
+
+    def _apply_critique_step(self, result: Dict, ocr_text: str, task: str) -> Dict:
+        """
+        Optional self-critique step where LLM reviews its own answer.
+
+        Args:
+            result: Initial extraction result
+            ocr_text: Original document text
+            task: Task name
+
+        Returns:
+            Improved result or original if no changes
+        """
+        if not CONFIG["llm"]["enable_critique"]:
+            return result
+
+        # Skip critique if result is empty or invalid
+        if not result or not isinstance(result, dict):
+            return result
+
+        try:
+            # Format critique prompt
+            critique_prompt = CRITIQUE_PROMPT.format(
+                previous_answer=json.dumps(result, indent=2),
+                task_description=self.task_prompts[task]
+            )
+
+            # Reset conversation for critique step
+            self.provider.reset_conversation()
+
+            # Get LLM's critique and improved response
+            response = self.provider.generate(
+                system_prompt=self.system_prompt.format(ocr_text=ocr_text),
+                user_prompt=critique_prompt,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                tools=None  # No tools in critique step
+            )
+
+            # Parse improved result
+            if response["type"] == "text" and response.get("content"):
+                improved_result = json.loads(response["content"])
+                return improved_result
+            else:
+                # If critique didn't return text, keep original
+                return result
+
+        except (json.JSONDecodeError, KeyError, Exception):
+            # If critique fails for any reason, return original result
+            return result
+
     def extract_html(self, ocr_text: str) -> Dict:
         """
         Placeholder for HTML generation (stretch goal).
@@ -267,18 +435,3 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
             "status": "not_implemented",
             "note": "Stretch goal - post MVP"
         }
-
-
-# Tool placeholders for future implementation
-TOOLS = [
-    {
-        "name": "validate_date",
-        "description": "Validate and normalize date format",
-        "parameters": {"date_string": "string"}
-    },
-    {
-        "name": "compare_html_to_image",
-        "description": "Compare rendered HTML to original image",
-        "parameters": {"html": "string", "image_path": "string"}
-    }
-]
