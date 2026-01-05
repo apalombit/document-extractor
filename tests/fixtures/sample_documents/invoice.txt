@@ -1,0 +1,3 @@
+author_date: {'authors': ["Master Blaster's Massive Entity"], 'date': '2022-05-15'}
+keywords: {'keywords': ['Invoice', 'Master Blaster', 'greasepaint', 'goggles', 'Canteen', 'Steering Wheel', 'Skull']}
+document_type: {'document_type': 'invoice'}

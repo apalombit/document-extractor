@@ -52,7 +52,7 @@ class LLMExtractor:
     
     def _load_system_prompt(self) -> str:
         """Load system prompt template"""
-        return """You are a document analysis assistant. Extract information ONLY from the provided DOCUMENT TEXT only to determine the REQUESTED INFORMATION.
+        return """You are a document analysis assistant. Extract information ONLY from the provided DOCUMENT TEXT to determine the REQUESTED INFORMATION.
 
 DOCUMENT TEXT:
 {ocr_text}
@@ -60,7 +60,7 @@ DOCUMENT TEXT:
 RULES:
 - Answer ONLY based on information explicitly present in the text
 - If information is not clearly present or you cannot answer based on text, respond with null
-- Never infer, assume, or add information not in the text
+- Never assume or add information not in the provided text
 - Your answer should ONLY be a JSON following provided schema in RESPONSE FORMAT with NO OTHER COMMENT added
 """
 
@@ -87,6 +87,49 @@ TOOL USAGE INSTRUCTIONS:
 - After extracting a date, call validate_date to verify it
 - If validation fails (valid=False), reconsider your extraction or set date to null
 - Use the normalized format from the tool if provided
+"""
+
+        return base + tool_info
+
+    def _get_system_prompt_for_keywords(self, ocr_text: str) -> str:
+        """
+        Create system prompt for keywords task with optional web expansion tool.
+
+        Args:
+            ocr_text: OCR text to include in prompt
+
+        Returns:
+            System prompt string with tool instructions for keywords task
+        """
+        base = self.system_prompt.format(ocr_text=ocr_text)
+
+        # Only add tool info if web expansion is enabled
+        if not CONFIG["llm"]["enable_web_keyword_expansion"]:
+            return base
+
+        tool_info = """
+
+AVAILABLE TOOLS:
+- expand_keywords_with_web_search(keywords): Expands and validates keywords by searching the web for related content.
+  Use this tool to:
+  * Verify your extracted keywords are relevant and commonly used
+  * Discover related keywords you may have missed
+  * Ensure keywords are suitable for document indexing
+
+  Returns: {
+    "original": your input keywords,
+    "web_keywords": keywords found from web sources,
+    "sources": URLs analyzed,
+    "status": success/partial_success/failed
+  }
+
+TOOL USAGE INSTRUCTIONS:
+1. First extract initial keywords from the document text
+2. THEN call expand_keywords_with_web_search with those keywords
+3. Review the web_keywords returned by the tool
+4. Expand your original keywords with relevant web_keywords that make sense
+5. Remove any original keywords that seem inconsistent with web results
+6. Return the final refined keyword list
 """
 
         return base + tool_info
@@ -180,7 +223,7 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
 """
 }
 
-    def extract_field(self, ocr_text: str, task: str) -> Tuple[Dict, Dict]:
+    def extract_field(self, ocr_text: str, task: str) -> Tuple[Dict, Dict, list]:
         """
         Extract specific field from document text using multi-turn conversation with tool support.
 
@@ -189,30 +232,38 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
             task: Field to extract ("author_date", "keywords", "document_type")
 
         Returns:
-            Tuple of (extraction_result, validation_flags)
+            Tuple of (extraction_result, validation_flags, tool_calls)
             - extraction_result: Dict with extracted data or null values
             - validation_flags: Dict with confidence and grounding issues
+            - tool_calls: List of tool calls made during extraction (for debugging)
         """
         if task not in self.task_prompts:
             raise ValueError(f"Unknown task: {task}")
 
+        # Track tool calls for debugging
+        tool_calls = []
+
         # Reset conversation for fresh extraction
         self.provider.reset_conversation()
 
-        # Format prompts (use tool-aware system prompt for author_date task)
+        # Format prompts (use tool-aware system prompt for tasks with tools)
         if task == "author_date":
             system = self._get_system_prompt_with_tools(ocr_text)
+        elif task == "keywords":
+            system = self._get_system_prompt_for_keywords(ocr_text)
         else:
             system = self.system_prompt.format(ocr_text=ocr_text)
 
         user = self.task_prompts[task]
 
-        # Import tools for author_date task
+        # Import tools based on task
         tools = None
-        use_tools = task == "author_date"
-        if use_tools:
+        if task == "author_date":
             from llm.tools import validate_date
             tools = [validate_date]
+        elif task == "keywords" and CONFIG["llm"]["enable_web_keyword_expansion"]:
+            from llm.tools import expand_keywords_with_web_search
+            tools = [expand_keywords_with_web_search]
 
         # Multi-turn conversation loop
         max_turns = CONFIG["llm"]["max_conversation_turns"]
@@ -249,7 +300,9 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
                 if response["type"] == "tool_call":
                     # Execute tools and add results to conversation
                     for tool_call in response["tool_calls"]:
-                        if tool_call['function']['name'] == "validate_date":
+                        tool_name = tool_call['function']['name']
+
+                        if tool_name == "validate_date":
                             # Parse arguments (handle both string and dict formats)
                             arguments = tool_call['function']['arguments']
                             if isinstance(arguments, str):
@@ -260,7 +313,36 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
                             from llm.tools import validate_date
                             result = validate_date(args['date_string'])
                             self.provider.add_tool_result("validate_date", result)
-                            break  # Only execute first tool call to prevent loops
+
+                            # Track tool call for debugging
+                            tool_calls.append({
+                                "tool": "validate_date",
+                                "arguments": args,
+                                "result": result,
+                                "phase": "extraction"
+                            })
+
+                        elif tool_name == "expand_keywords_with_web_search":
+                            # Parse arguments (handle both string and dict formats)
+                            arguments = tool_call['function']['arguments']
+                            if isinstance(arguments, str):
+                                args = json.loads(arguments)
+                            else:
+                                args = arguments  # Already a dict
+
+                            from llm.tools import expand_keywords_with_web_search
+                            result = expand_keywords_with_web_search(args['keywords'])
+                            self.provider.add_tool_result("expand_keywords_with_web_search", result)
+
+                            # Track tool call for debugging
+                            tool_calls.append({
+                                "tool": "expand_keywords_with_web_search",
+                                "arguments": args,
+                                "result": result,
+                                "phase": "extraction"
+                            })
+
+                        break  # Only execute first tool call to prevent loops
 
                     # Disable tools after first call to prevent infinite loops
                     tools = None
@@ -270,20 +352,21 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
                     # Parse JSON response
                     result = json.loads(response["content"])
 
-                    # Apply optional critique step
-                    result = self._apply_critique_step(result, ocr_text, task)
+                    # Apply optional critique step (and track any tool calls made during critique)
+                    result, critique_tool_calls = self._apply_critique_step(result, ocr_text, task)
+                    tool_calls.extend(critique_tool_calls)
 
                     # Validate grounding
                     validation = self._validate_grounding(result, ocr_text, task)
 
-                    return result, validation
+                    return result, validation, tool_calls
 
             # Max turns exceeded
             return {}, {
                 "valid_json": False,
                 "grounding_issues": ["Max conversation turns exceeded"],
                 "confidence": "low"
-            }
+            }, tool_calls
 
         except json.JSONDecodeError as e:
             # Return error state with low confidence
@@ -291,14 +374,14 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
                 "valid_json": False,
                 "grounding_issues": [f"JSON parse error: {str(e)}"],
                 "confidence": "low"
-            }
+            }, tool_calls
         except Exception as e:
             # Catch other errors
             return {}, {
                 "valid_json": False,
                 "grounding_issues": [f"Error: {str(e)}"],
                 "confidence": "low"
-            }
+            }, tool_calls
     
     def _validate_grounding(self, result: Dict, ocr_text: str, task: str) -> Dict:
         """
@@ -360,7 +443,7 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
 
         return flags
 
-    def _apply_critique_step(self, result: Dict, ocr_text: str, task: str) -> Dict:
+    def _apply_critique_step(self, result: Dict, ocr_text: str, task: str) -> Tuple[Dict, list]:
         """
         Optional self-critique step where LLM reviews its own answer.
 
@@ -370,14 +453,19 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
             task: Task name
 
         Returns:
-            Improved result or original if no changes
+            Tuple of (improved_result, tool_calls)
+            - improved_result: Improved result or original if no changes
+            - tool_calls: List of tool calls made during critique (for debugging)
         """
+        # Track tool calls during critique
+        tool_calls = []
+
         if not CONFIG["llm"]["enable_critique"]:
-            return result
+            return result, tool_calls
 
         # Skip critique if result is empty or invalid
         if not result or not isinstance(result, dict):
-            return result
+            return result, tool_calls
 
         try:
             # Format critique prompt
@@ -386,29 +474,100 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
                 task_description=self.task_prompts[task]
             )
 
-            # Reset conversation for critique step
+            # Reset conversation for critique step (fresh start)
             self.provider.reset_conversation()
 
-            # Get LLM's critique and improved response
-            response = self.provider.generate(
-                system_prompt=self.system_prompt.format(ocr_text=ocr_text),
-                user_prompt=critique_prompt,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                tools=None  # No tools in critique step
-            )
+            # Determine if tools should be available
+            tools = None
+            if task == "author_date":
+                from llm.tools import validate_date
+                tools = [validate_date]
+            elif task == "keywords" and CONFIG["llm"]["enable_web_keyword_expansion"]:
+                from llm.tools import expand_keywords_with_web_search
+                tools = [expand_keywords_with_web_search]
 
-            # Parse improved result
-            if response["type"] == "text" and response.get("content"):
-                improved_result = json.loads(response["content"])
-                return improved_result
+            # Use tool-aware system prompt for tasks with tools
+            if task == "author_date":
+                system_prompt = self._get_system_prompt_with_tools(ocr_text)
+            elif task == "keywords":
+                system_prompt = self._get_system_prompt_for_keywords(ocr_text)
             else:
-                # If critique didn't return text, keep original
-                return result
+                system_prompt = self.system_prompt.format(ocr_text=ocr_text)
+
+            # Multi-turn loop for critique (to handle tool calls)
+            max_turns = CONFIG["llm"]["max_conversation_turns"]
+            turn = 0
+
+            while turn < max_turns:
+                response = self.provider.generate(
+                    system_prompt=system_prompt,
+                    user_prompt=critique_prompt if turn == 0 else "",
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    tools=tools
+                )
+
+                if response["type"] == "tool_call":
+                    # Execute tools and add results
+                    for tool_call in response["tool_calls"]:
+                        tool_name = tool_call['function']['name']
+
+                        if tool_name == "validate_date":
+                            # Parse arguments (handle both string and dict formats)
+                            arguments = tool_call['function']['arguments']
+                            if isinstance(arguments, str):
+                                args = json.loads(arguments)
+                            else:
+                                args = arguments
+
+                            from llm.tools import validate_date
+                            tool_result = validate_date(args['date_string'])
+                            self.provider.add_tool_result("validate_date", tool_result)
+
+                            # Track tool call for debugging
+                            tool_calls.append({
+                                "tool": "validate_date",
+                                "arguments": args,
+                                "result": tool_result,
+                                "phase": "critique"
+                            })
+
+                        elif tool_name == "expand_keywords_with_web_search":
+                            # Parse arguments (handle both string and dict formats)
+                            arguments = tool_call['function']['arguments']
+                            if isinstance(arguments, str):
+                                args = json.loads(arguments)
+                            else:
+                                args = arguments
+
+                            from llm.tools import expand_keywords_with_web_search
+                            tool_result = expand_keywords_with_web_search(args['keywords'])
+                            self.provider.add_tool_result("expand_keywords_with_web_search", tool_result)
+
+                            # Track tool call for debugging
+                            tool_calls.append({
+                                "tool": "expand_keywords_with_web_search",
+                                "arguments": args,
+                                "result": tool_result,
+                                "phase": "critique"
+                            })
+
+                        break  # Only first tool call
+
+                    # Disable tools after first use to prevent loops
+                    tools = None
+                    turn += 1
+                else:
+                    # Got final critique response
+                    improved_result = json.loads(response["content"])
+                    return improved_result, tool_calls
+
+            # Max turns exceeded in critique - return original
+            return result, tool_calls
 
         except (json.JSONDecodeError, KeyError, Exception):
             # If critique fails for any reason, return original result
-            return result
+            return result, tool_calls
 
     def extract_html(self, ocr_text: str) -> Dict:
         """

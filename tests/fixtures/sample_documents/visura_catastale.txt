@@ -1,0 +1,3 @@
+author_date: {'authors': ['Agenzia entrate', 'Ufficio Provinciale di XX'], 'date': '2014-05-27'}
+keywords: {'keywords': ['Catasto', 'Fabbricati', 'Visura', 'Immobile', 'Milano']}
+document_type: {'document_type': 'legal'}

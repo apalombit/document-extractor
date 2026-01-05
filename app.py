@@ -10,7 +10,7 @@ from pipeline.extraction_workflow import ExtractionWorkflow
 from utils.file_handler import FileHandler
 
 
-def display_task_results(task_name: str, task_label: str, icon: str, results: dict, validation: dict):
+def display_task_results(task_name: str, task_label: str, icon: str, results: dict, validation: dict, tool_calls: list = None):
     """
     Display extraction results and validation for a single task.
 
@@ -20,6 +20,7 @@ def display_task_results(task_name: str, task_label: str, icon: str, results: di
         icon: Emoji icon for the section
         results: Extraction results for this task
         validation: Validation flags for this task
+        tool_calls: List of tool calls made during extraction (for debugging)
     """
     st.subheader(f"{icon} {task_label}")
 
@@ -30,6 +31,51 @@ def display_task_results(task_name: str, task_label: str, icon: str, results: di
     # Show validation status
     is_valid = validation.get("confidence") == "high"
     st.checkbox("Validated", value=is_valid, key=f"val_{task_name}", disabled=True)
+
+    # Show tool calls if any
+    if tool_calls and len(tool_calls) > 0:
+        with st.expander(f"🔍 Tool Usage ({len(tool_calls)} tool{'s' if len(tool_calls) > 1 else ''} called)"):
+            for idx, call in enumerate(tool_calls):
+                st.write(f"**Tool {idx + 1}: `{call['tool']}`** (Phase: {call.get('phase', 'unknown')})")
+
+                # Show arguments
+                st.write("**Arguments:**")
+                st.json(call.get("arguments", {}))
+
+                # Show result based on tool type
+                if call["tool"] == "validate_date":
+                    result = call.get("result", {})
+                    if result.get("valid"):
+                        st.success(f"✅ Valid date: {result.get('normalized')}")
+                    else:
+                        st.error(f"❌ Invalid: {result.get('reason')}")
+
+                elif call["tool"] == "expand_keywords_with_web_search":
+                    result = call.get("result", {})
+                    status = result.get("status", "unknown")
+
+                    if status == "success":
+                        st.success(f"✅ {result.get('message')}")
+                    elif status == "partial_success":
+                        st.warning(f"⚠️ {result.get('message')}")
+                    else:
+                        st.error(f"❌ {result.get('message')}")
+
+                    # Show original keywords
+                    st.write(f"**Original keywords:** {', '.join(result.get('original', []))}")
+
+                    # Show web keywords if any
+                    if result.get("web_keywords"):
+                        st.write(f"**Web keywords found:** {', '.join(result.get('web_keywords', []))}")
+
+                    # Show sources if any
+                    if result.get("sources"):
+                        st.write(f"**Sources analyzed ({len(result.get('sources', []))}):**")
+                        for source in result.get("sources", []):
+                            st.markdown(f"- {source}")
+
+                if idx < len(tool_calls) - 1:
+                    st.divider()
 
     # Show grounding issues if any
     if validation.get("grounding_issues"):
@@ -121,7 +167,8 @@ if uploaded_file:
                         task_label="Author & Date",
                         icon="📄",
                         results=workflow_results["author_date"],
-                        validation=workflow_results["validation"]["author_date"]
+                        validation=workflow_results["validation"]["author_date"],
+                        tool_calls=workflow_results.get("tool_calls", {}).get("author_date", [])
                     )
 
                 # Keywords
@@ -131,7 +178,8 @@ if uploaded_file:
                         task_label="Keywords",
                         icon="🔑",
                         results=workflow_results["keywords"],
-                        validation=workflow_results["validation"]["keywords"]
+                        validation=workflow_results["validation"]["keywords"],
+                        tool_calls=workflow_results.get("tool_calls", {}).get("keywords", [])
                     )
 
                 # Document Type
@@ -141,7 +189,8 @@ if uploaded_file:
                         task_label="Document Type",
                         icon="📋",
                         results=workflow_results["document_type"],
-                        validation=workflow_results["validation"]["document_type"]
+                        validation=workflow_results["validation"]["document_type"],
+                        tool_calls=workflow_results.get("tool_calls", {}).get("document_type", [])
                     )
 
                 # Export options

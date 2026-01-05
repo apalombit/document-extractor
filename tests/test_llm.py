@@ -3,6 +3,7 @@ import pytest
 from typing import Dict, List, Optional
 from llm.extractor import LLMExtractor
 from llm.provider import LLMProvider
+from config import CONFIG
 
 
 class MockLLMProvider(LLMProvider):
@@ -72,7 +73,7 @@ def test_extract_author_date(sample_ocr_text):
     mock_provider = MockLLMProvider()
     extractor = LLMExtractor(provider=mock_provider)
 
-    result, validation = extractor.extract_field(sample_ocr_text, "author_date")
+    result, validation, tool_calls = extractor.extract_field(sample_ocr_text, "author_date")
 
     assert isinstance(result, dict)
     assert "authors" in result or "date" in result
@@ -83,28 +84,42 @@ def test_extract_author_date(sample_ocr_text):
 
 def test_extract_keywords(sample_ocr_text):
     """Test keyword extraction"""
-    mock_provider = MockLLMProvider()
-    extractor = LLMExtractor(provider=mock_provider)
+    # Temporarily disable critique for this test
+    original_critique = CONFIG["llm"]["enable_critique"]
+    CONFIG["llm"]["enable_critique"] = False
 
-    result, validation = extractor.extract_field(sample_ocr_text, "keywords")
+    try:
+        mock_provider = MockLLMProvider()
+        extractor = LLMExtractor(provider=mock_provider)
 
-    assert isinstance(result, dict)
-    assert "keywords" in result
-    assert isinstance(validation, dict)
-    assert validation["valid_json"] is True
+        result, validation, tool_calls = extractor.extract_field(sample_ocr_text, "keywords")
+
+        assert isinstance(result, dict)
+        assert "keywords" in result
+        assert isinstance(validation, dict)
+        assert validation["valid_json"] is True
+    finally:
+        CONFIG["llm"]["enable_critique"] = original_critique
 
 
 def test_extract_document_type(sample_ocr_text):
     """Test document type classification"""
-    mock_provider = MockLLMProvider()
-    extractor = LLMExtractor(provider=mock_provider)
+    # Temporarily disable critique for this test
+    original_critique = CONFIG["llm"]["enable_critique"]
+    CONFIG["llm"]["enable_critique"] = False
 
-    result, validation = extractor.extract_field(sample_ocr_text, "document_type")
+    try:
+        mock_provider = MockLLMProvider()
+        extractor = LLMExtractor(provider=mock_provider)
 
-    assert isinstance(result, dict)
-    assert "document_type" in result
-    assert isinstance(validation, dict)
-    assert validation["valid_json"] is True
+        result, validation, tool_calls = extractor.extract_field(sample_ocr_text, "document_type")
+
+        assert isinstance(result, dict)
+        assert "document_type" in result
+        assert isinstance(validation, dict)
+        assert validation["valid_json"] is True
+    finally:
+        CONFIG["llm"]["enable_critique"] = original_critique
 
 
 def test_json_output_format(sample_ocr_text):
@@ -112,7 +127,7 @@ def test_json_output_format(sample_ocr_text):
     mock_provider = MockLLMProvider()
     extractor = LLMExtractor(provider=mock_provider)
 
-    result, validation = extractor.extract_field(sample_ocr_text, "keywords")
+    result, validation, tool_calls = extractor.extract_field(sample_ocr_text, "keywords")
 
     # Verify it's valid JSON (dict)
     assert isinstance(result, dict)
@@ -128,7 +143,7 @@ def test_null_when_info_missing():
     extractor = LLMExtractor(provider=mock_provider)
 
     empty_text = "This is a blank document with no useful information."
-    result, validation = extractor.extract_field(empty_text, "author_date")
+    result, validation, tool_calls = extractor.extract_field(empty_text, "author_date")
 
     # Should handle null values gracefully
     assert isinstance(result, dict)
@@ -143,7 +158,7 @@ def test_invalid_json_handling():
     })
     extractor = LLMExtractor(provider=mock_provider)
 
-    result, validation = extractor.extract_field("Some text", "keywords")
+    result, validation, tool_calls = extractor.extract_field("Some text", "keywords")
 
     # Should handle gracefully
     assert validation["valid_json"] is False
@@ -167,7 +182,7 @@ def test_multi_turn_with_tool_call(sample_ocr_text):
     mock_provider = MockLLMProvider(simulate_tool_call=True)
     extractor = LLMExtractor(provider=mock_provider)
 
-    result, validation = extractor.extract_field(sample_ocr_text, "author_date")
+    result, validation, tool_calls = extractor.extract_field(sample_ocr_text, "author_date")
 
     # Should have made 2 calls: first for tool call, second for final answer
     assert mock_provider.call_count == 2
@@ -197,7 +212,7 @@ def test_tool_execution_for_author_date():
     extractor = LLMExtractor(provider=mock_provider)
 
     # For author_date, tools should be used
-    result, validation = extractor.extract_field("Report from Dr. Smith dated 2024-03-15", "author_date")
+    result, validation, tool_calls = extractor.extract_field("Report from Dr. Smith dated 2024-03-15", "author_date")
 
     # Should have tool result in messages
     assert len(mock_provider.messages) > 0
@@ -205,42 +220,219 @@ def test_tool_execution_for_author_date():
 
 def test_no_tools_for_other_tasks(sample_ocr_text):
     """Test that tools are not provided for non-author_date tasks"""
-    mock_provider = MockLLMProvider()
-    extractor = LLMExtractor(provider=mock_provider)
+    # Temporarily disable critique for this test
+    original_critique = CONFIG["llm"]["enable_critique"]
+    CONFIG["llm"]["enable_critique"] = False
 
-    # For keywords task, should complete in single turn
-    result, validation = extractor.extract_field(sample_ocr_text, "keywords")
+    try:
+        mock_provider = MockLLMProvider()
+        extractor = LLMExtractor(provider=mock_provider)
 
-    # Should be single-turn (no tool calls)
-    assert mock_provider.call_count == 1
-    assert validation["valid_json"] is True
+        # For keywords task, should complete in single turn
+        result, validation, tool_calls = extractor.extract_field(sample_ocr_text, "keywords")
+
+        # Should be single-turn (no tool calls)
+        assert mock_provider.call_count == 1
+        assert validation["valid_json"] is True
+    finally:
+        CONFIG["llm"]["enable_critique"] = original_critique
 
 
 def test_max_turns_limit():
     """Test that tools are disabled after first call to prevent infinite loops"""
-    # Create provider that always returns tool calls if tools are available
-    class InfiniteToolCallProvider(MockLLMProvider):
-        def generate(self, system_prompt, user_prompt, temperature, max_tokens, tools=None):
-            self.call_count += 1
-            if tools:
+    # Temporarily disable critique for this test
+    original_critique = CONFIG["llm"]["enable_critique"]
+    CONFIG["llm"]["enable_critique"] = False
+
+    try:
+        # Create provider that always returns tool calls if tools are available
+        class InfiniteToolCallProvider(MockLLMProvider):
+            def generate(self, system_prompt, user_prompt, temperature, max_tokens, tools=None):
+                self.call_count += 1
+                if tools:
+                    return {
+                        "type": "tool_call",
+                        "tool_calls": [{
+                            "function": {
+                                "name": "validate_date",
+                                "arguments": '{"date_string": "2024-03-15"}'
+                            }
+                        }]
+                    }
+                return {"type": "text", "content": '{"authors": null, "date": null}'}
+
+        mock_provider = InfiniteToolCallProvider()
+        extractor = LLMExtractor(provider=mock_provider)
+
+        result, validation, tool_calls = extractor.extract_field("Some text", "author_date")
+
+        # Should make exactly 2 calls: one tool call, then final response with tools disabled
+        assert mock_provider.call_count == 2
+        # Should succeed because tools are disabled after first call
+        assert validation["valid_json"] is True
+        assert result == {"authors": None, "date": None}
+    finally:
+        CONFIG["llm"]["enable_critique"] = original_critique
+
+
+def test_keywords_with_web_expansion_enabled():
+    """Test keywords extraction with web expansion tool enabled"""
+    # Save original config
+    original_flag = CONFIG["llm"]["enable_web_keyword_expansion"]
+
+    try:
+        # Enable web expansion
+        CONFIG["llm"]["enable_web_keyword_expansion"] = True
+
+        # Mock provider that simulates tool call
+        class MockProviderWithWebExpansion(LLMProvider):
+            def __init__(self):
+                self.call_count = 0
+                self.messages = []
+
+            def generate(self, system_prompt, user_prompt, temperature, max_tokens, tools=None):
+                self.call_count += 1
+
+                # First call: return tool call to expand keywords
+                if self.call_count == 1:
+                    return {
+                        "type": "tool_call",
+                        "tool_calls": [{
+                            "function": {
+                                "name": "expand_keywords_with_web_search",
+                                "arguments": {"keywords": ["medical", "blood", "test"]}
+                            }
+                        }]
+                    }
+                # Second call: return final keywords
+                else:
+                    return {
+                        "type": "text",
+                        "content": '{"keywords": ["medical", "blood", "test"]}'
+                    }
+
+            def reset_conversation(self):
+                self.messages = []
+
+            def add_tool_result(self, tool_name, result):
+                self.messages.append({"tool": tool_name, "result": result})
+
+        mock_provider = MockProviderWithWebExpansion()
+        extractor = LLMExtractor(provider=mock_provider)
+
+        result, validation, tool_calls = extractor.extract_field("Some medical text", "keywords")
+
+        # Should have called tool
+        assert mock_provider.call_count >= 2
+        # Should have keywords in result
+        assert "keywords" in result
+        assert validation["valid_json"] is True
+
+    finally:
+        CONFIG["llm"]["enable_web_keyword_expansion"] = original_flag
+
+
+def test_keywords_web_expansion_disabled_by_default():
+    """Test that web expansion is disabled by default"""
+    # Save original config
+    original_flag = CONFIG["llm"]["enable_web_keyword_expansion"]
+    original_critique = CONFIG["llm"]["enable_critique"]
+
+    try:
+        # Ensure disabled
+        CONFIG["llm"]["enable_web_keyword_expansion"] = False
+        CONFIG["llm"]["enable_critique"] = False
+
+        class MockProviderSimple(LLMProvider):
+            def __init__(self):
+                self.call_count = 0
+                self.messages = []
+
+            def generate(self, system_prompt, user_prompt, temperature, max_tokens, tools=None):
+                self.call_count += 1
                 return {
-                    "type": "tool_call",
-                    "tool_calls": [{
-                        "function": {
-                            "name": "validate_date",
-                            "arguments": '{"date_string": "2024-03-15"}'
-                        }
-                    }]
+                    "type": "text",
+                    "content": '{"keywords": ["test", "keyword"]}'
                 }
-            return {"type": "text", "content": '{"authors": null, "date": null}'}
 
-    mock_provider = InfiniteToolCallProvider()
-    extractor = LLMExtractor(provider=mock_provider)
+            def reset_conversation(self):
+                self.messages = []
 
-    result, validation = extractor.extract_field("Some text", "author_date")
+            def add_tool_result(self, tool_name, result):
+                self.messages.append({"tool": tool_name, "result": result})
 
-    # Should make exactly 2 calls: one tool call, then final response with tools disabled
-    assert mock_provider.call_count == 2
-    # Should succeed because tools are disabled after first call
-    assert validation["valid_json"] is True
-    assert result == {"authors": None, "date": None}
+        mock_provider = MockProviderSimple()
+        extractor = LLMExtractor(provider=mock_provider)
+
+        result, validation, tool_calls = extractor.extract_field("Some text", "keywords")
+
+        # Should only make 1 call (no tool offered)
+        assert mock_provider.call_count == 1
+        assert result["keywords"] == ["test", "keyword"]
+
+    finally:
+        CONFIG["llm"]["enable_web_keyword_expansion"] = original_flag
+        CONFIG["llm"]["enable_critique"] = original_critique
+
+
+def test_keywords_tool_called_with_correct_arguments():
+    """Test that keywords tool is called with extracted keywords"""
+    # Save original config
+    original_flag = CONFIG["llm"]["enable_web_keyword_expansion"]
+    original_critique = CONFIG["llm"]["enable_critique"]
+
+    try:
+        # Enable web expansion, disable critique
+        CONFIG["llm"]["enable_web_keyword_expansion"] = True
+        CONFIG["llm"]["enable_critique"] = False
+
+        class MockProviderTrackingArgs(LLMProvider):
+            def __init__(self):
+                self.call_count = 0
+                self.tool_args = None
+                self.messages = []
+
+            def generate(self, system_prompt, user_prompt, temperature, max_tokens, tools=None):
+                self.call_count += 1
+
+                if self.call_count == 1:
+                    # Store tool args for verification
+                    self.tool_args = {"keywords": ["medical", "diagnosis"]}
+                    return {
+                        "type": "tool_call",
+                        "tool_calls": [{
+                            "function": {
+                                "name": "expand_keywords_with_web_search",
+                                "arguments": self.tool_args
+                            }
+                        }]
+                    }
+                else:
+                    return {
+                        "type": "text",
+                        "content": '{"keywords": ["medical", "diagnosis", "treatment"]}'
+                    }
+
+            def reset_conversation(self):
+                self.messages = []
+
+            def add_tool_result(self, tool_name, result):
+                self.messages.append({"tool": tool_name, "result": result})
+                # Verify result has expected structure
+                assert "original" in result
+                assert "web_keywords" in result
+                assert "status" in result
+
+        mock_provider = MockProviderTrackingArgs()
+        extractor = LLMExtractor(provider=mock_provider)
+
+        result, validation, tool_calls = extractor.extract_field("Some text", "keywords")
+
+        # Verify tool was called
+        assert mock_provider.call_count == 2
+        # Verify tool result was added to conversation
+        assert len(mock_provider.messages) > 0
+
+    finally:
+        CONFIG["llm"]["enable_web_keyword_expansion"] = original_flag
+        CONFIG["llm"]["enable_critique"] = original_critique

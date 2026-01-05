@@ -60,7 +60,7 @@ def test_critique_disabled_by_default():
         )
         extractor = LLMExtractor(provider=mock_provider)
 
-        result, validation = extractor.extract_field("Some text", "author_date")
+        result, validation, tool_calls = extractor.extract_field("Some text", "author_date")
 
         # Should only make 1 call (no critique)
         assert mock_provider.call_count == 1
@@ -89,7 +89,7 @@ def test_critique_enabled_improves_answer():
         )
         extractor = LLMExtractor(provider=mock_provider)
 
-        result, validation = extractor.extract_field("Some text", "author_date")
+        result, validation, tool_calls = extractor.extract_field("Some text", "author_date")
 
         # Should make 2 calls (initial + critique)
         assert mock_provider.call_count == 2
@@ -119,7 +119,7 @@ def test_critique_unchanged_when_correct():
         )
         extractor = LLMExtractor(provider=mock_provider)
 
-        result, validation = extractor.extract_field("Some text", "author_date")
+        result, validation, tool_calls = extractor.extract_field("Some text", "author_date")
 
         # Should make 2 calls (initial + critique)
         assert mock_provider.call_count == 2
@@ -148,7 +148,7 @@ def test_critique_handles_invalid_json():
         )
         extractor = LLMExtractor(provider=mock_provider)
 
-        result, validation = extractor.extract_field("Some text", "author_date")
+        result, validation, tool_calls = extractor.extract_field("Some text", "author_date")
 
         # Should make 2 calls
         assert mock_provider.call_count == 2
@@ -176,7 +176,7 @@ def test_critique_with_null_values():
         )
         extractor = LLMExtractor(provider=mock_provider)
 
-        result, validation = extractor.extract_field("Some text", "author_date")
+        result, validation, tool_calls = extractor.extract_field("Some text", "author_date")
 
         # Should make 2 calls
         assert mock_provider.call_count == 2
@@ -205,7 +205,7 @@ def test_critique_for_keywords_task():
         )
         extractor = LLMExtractor(provider=mock_provider)
 
-        result, validation = extractor.extract_field("Some text", "keywords")
+        result, validation, tool_calls = extractor.extract_field("Some text", "keywords")
 
         # Should make 2 calls
         assert mock_provider.call_count == 2
@@ -233,7 +233,7 @@ def test_critique_for_document_type_task():
         )
         extractor = LLMExtractor(provider=mock_provider)
 
-        result, validation = extractor.extract_field("Some text", "document_type")
+        result, validation, tool_calls = extractor.extract_field("Some text", "document_type")
 
         # Should make 2 calls
         assert mock_provider.call_count == 2
@@ -261,7 +261,7 @@ def test_critique_skips_empty_results():
         )
         extractor = LLMExtractor(provider=mock_provider)
 
-        result, validation = extractor.extract_field("Some text", "author_date")
+        result, validation, tool_calls = extractor.extract_field("Some text", "author_date")
 
         # Should make 1 call only (critique skipped for empty result)
         # Note: The critique step checks if result is empty and skips if so
@@ -270,4 +270,145 @@ def test_critique_skips_empty_results():
 
     finally:
         # Restore original config
+        CONFIG["llm"]["enable_critique"] = original_critique
+
+
+def test_critique_with_tools_enabled():
+    """Test that critique can use validate_date tool when enabled"""
+    # Save original config
+    original_critique = CONFIG["llm"]["enable_critique"]
+
+    try:
+        # Enable critique
+        CONFIG["llm"]["enable_critique"] = True
+
+        # Mock provider that simulates tool call during critique
+        class MockProviderWithToolsInCritique(LLMProvider):
+            def __init__(self):
+                self.call_count = 0
+                self.messages = []
+                self.in_critique = False
+
+            def generate(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int, tools: Optional[List] = None) -> Dict:
+                self.call_count += 1
+
+                # Check if we're in critique (user prompt contains "Review your previous")
+                if "Review your previous" in user_prompt:
+                    self.in_critique = True
+
+                # Initial extraction - return with European date format
+                if not self.in_critique:
+                    return {
+                        "type": "text",
+                        "content": '{"authors": ["Dr. Smith"], "date": "09/07/2009"}'
+                    }
+                else:
+                    # Critique phase - first call tool to validate, second return normalized
+                    if self.call_count == 2:
+                        # First critique call - use tool
+                        return {
+                            "type": "tool_call",
+                            "tool_calls": [{
+                                "function": {
+                                    "name": "validate_date",
+                                    "arguments": {"date_string": "09/07/2009"}
+                                }
+                            }]
+                        }
+                    else:
+                        # After tool result - return normalized date
+                        return {
+                            "type": "text",
+                            "content": '{"authors": ["Dr. Smith"], "date": "2009-07-09"}'
+                        }
+
+            def reset_conversation(self):
+                self.messages = []
+                self.in_critique = False
+
+            def add_tool_result(self, tool_name: str, result: Dict):
+                self.messages.append({"tool": tool_name, "result": result})
+
+        mock_provider = MockProviderWithToolsInCritique()
+        extractor = LLMExtractor(provider=mock_provider)
+
+        result, validation, tool_calls = extractor.extract_field("Some text", "author_date")
+
+        # Should make multiple calls (initial + critique with tool + final)
+        assert mock_provider.call_count >= 2
+        # Critique should normalize date via tool
+        assert result["date"] == "2009-07-09"
+        assert validation["valid_json"] is True
+
+    finally:
+        CONFIG["llm"]["enable_critique"] = original_critique
+
+
+def test_critique_tool_call_handling():
+    """Test critique properly handles tool execution and results"""
+    # Save original config
+    original_critique = CONFIG["llm"]["enable_critique"]
+
+    try:
+        # Enable critique
+        CONFIG["llm"]["enable_critique"] = True
+
+        # Mock provider to track tool usage
+        class MockProviderTrackingTools(LLMProvider):
+            def __init__(self):
+                self.call_count = 0
+                self.tool_results_added = []
+                self.messages = []
+
+            def generate(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int, tools: Optional[List] = None) -> Dict:
+                self.call_count += 1
+
+                # Initial extraction
+                if self.call_count == 1:
+                    return {
+                        "type": "text",
+                        "content": '{"authors": ["Dr. Smith"], "date": "2099-12-31"}'  # Future date (invalid)
+                    }
+                # Critique - call tool
+                elif self.call_count == 2:
+                    return {
+                        "type": "tool_call",
+                        "tool_calls": [{
+                            "function": {
+                                "name": "validate_date",
+                                "arguments": '{"date_string": "2099-12-31"}'
+                            }
+                        }]
+                    }
+                # After tool - fix the date based on tool feedback
+                else:
+                    return {
+                        "type": "text",
+                        "content": '{"authors": ["Dr. Smith"], "date": null}'  # Set to null due to invalid
+                    }
+
+            def reset_conversation(self):
+                self.messages = []
+
+            def add_tool_result(self, tool_name: str, result: Dict):
+                self.tool_results_added.append({"tool": tool_name, "result": result})
+
+        mock_provider = MockProviderTrackingTools()
+        extractor = LLMExtractor(provider=mock_provider)
+
+        result, validation, tool_calls = extractor.extract_field("Some text", "author_date")
+
+        # Verify tool was called during critique
+        assert len(mock_provider.tool_results_added) > 0
+        assert mock_provider.tool_results_added[0]["tool"] == "validate_date"
+
+        # Verify tool result indicated invalid date
+        tool_result = mock_provider.tool_results_added[0]["result"]
+        assert tool_result["valid"] is False
+        assert "future" in tool_result["reason"].lower()
+
+        # Verify critique corrected the date to null
+        assert result["date"] is None
+
+    finally:
         CONFIG["llm"]["enable_critique"] = original_critique

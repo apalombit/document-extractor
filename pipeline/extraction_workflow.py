@@ -60,6 +60,16 @@ class ExtractionWorkflow:
                 "keywords": {},
                 "document_type": {}
             },
+            "tool_calls": {
+                "author_date": [],
+                "keywords": [],
+                "document_type": []
+            },
+            "task_errors": {
+                "author_date": None,
+                "keywords": None,
+                "document_type": None
+            },
             "ocr_text": "",
             "errors": []
         }
@@ -103,9 +113,10 @@ class ExtractionWorkflow:
 
             for task in tasks:
                 try:
-                    extraction_result, validation_flags = self.extractor.extract_field(ocr_text, task)
+                    extraction_result, validation_flags, tool_calls_list = self.extractor.extract_field(ocr_text, task)
                     results[task] = extraction_result
                     results["validation"][task] = validation_flags
+                    results["tool_calls"][task] = tool_calls_list
 
                 except Exception as e:
                     error_msg = f"LLM extraction error for {task}: {str(e)}"
@@ -117,6 +128,7 @@ class ExtractionWorkflow:
                         "grounding_issues": [error_msg],
                         "confidence": "low"
                     }
+                    results["tool_calls"][task] = []
 
             return results
 

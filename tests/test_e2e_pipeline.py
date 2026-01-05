@@ -5,7 +5,15 @@ from tests.test_helpers import load_expected_outputs, compare_extraction_results
 
 
 @pytest.mark.e2e
-@pytest.mark.parametrize("image_path,expected_file", [("tests/fixtures/sample_documents/medical_report.png", "tests/fixtures/sample_documents/medical_report.txt")])
+@pytest.mark.parametrize("image_path,expected_file", [
+    ("tests/fixtures/sample_documents/medical_report.png", "tests/fixtures/sample_documents/medical_report.txt"),
+    # Additional fixtures available for future testing (uncomment to activate):
+    # ("tests/fixtures/sample_documents/invoice.png", "tests/fixtures/sample_documents/invoice.txt"),
+    # ("tests/fixtures/sample_documents/court_order.png", "tests/fixtures/sample_documents/court_order.txt"),
+    # ("tests/fixtures/sample_documents/prescription.png", "tests/fixtures/sample_documents/prescription.txt"),
+    # ("tests/fixtures/sample_documents/mri_report.png", "tests/fixtures/sample_documents/mri_report.txt"),
+    # ("tests/fixtures/sample_documents/visura_catastale.png", "tests/fixtures/sample_documents/visura_catastale.txt"),
+])
 def test_extraction_pipeline_accuracy(image_path, expected_file):
     """
     Test complete extraction pipeline against ground truth.
@@ -63,7 +71,15 @@ def test_extraction_pipeline_accuracy(image_path, expected_file):
 
 
 @pytest.mark.e2e
-@pytest.mark.parametrize("image_path,expected_file", [("tests/fixtures/sample_documents/medical_report.png", "tests/fixtures/sample_documents/medical_report.txt")])
+@pytest.mark.parametrize("image_path,expected_file", [
+    ("tests/fixtures/sample_documents/medical_report.png", "tests/fixtures/sample_documents/medical_report.txt"),
+    # Additional fixtures available for future testing (uncomment to activate):
+    # ("tests/fixtures/sample_documents/invoice.png", "tests/fixtures/sample_documents/invoice.txt"),
+    # ("tests/fixtures/sample_documents/court_order.png", "tests/fixtures/sample_documents/court_order.txt"),
+    # ("tests/fixtures/sample_documents/prescription.png", "tests/fixtures/sample_documents/prescription.txt"),
+    # ("tests/fixtures/sample_documents/mri_report.png", "tests/fixtures/sample_documents/mri_report.txt"),
+    # ("tests/fixtures/sample_documents/visura_catastale.png", "tests/fixtures/sample_documents/visura_catastale.txt"),
+])
 def test_validation_confidence_on_good_extraction(image_path, expected_file):
     """
     Verify validation flags high confidence for accurate extractions.
@@ -134,7 +150,15 @@ def test_workflow_returns_complete_structure():
 
 
 @pytest.mark.e2e
-@pytest.mark.parametrize("image_path,expected_file", [("tests/fixtures/sample_documents/medical_report.png", "tests/fixtures/sample_documents/medical_report.txt")])
+@pytest.mark.parametrize("image_path,expected_file", [
+    ("tests/fixtures/sample_documents/medical_report.png", "tests/fixtures/sample_documents/medical_report.txt"),
+    # Additional fixtures available for future testing (uncomment to activate):
+    # ("tests/fixtures/sample_documents/invoice.png", "tests/fixtures/sample_documents/invoice.txt"),
+    # ("tests/fixtures/sample_documents/court_order.png", "tests/fixtures/sample_documents/court_order.txt"),
+    # ("tests/fixtures/sample_documents/prescription.png", "tests/fixtures/sample_documents/prescription.txt"),
+    # ("tests/fixtures/sample_documents/mri_report.png", "tests/fixtures/sample_documents/mri_report.txt"),
+    # ("tests/fixtures/sample_documents/visura_catastale.png", "tests/fixtures/sample_documents/visura_catastale.txt"),
+])
 def test_ocr_text_extraction(image_path, expected_file):
     """
     Verify OCR text is extracted and non-empty for valid images.
@@ -149,7 +173,15 @@ def test_ocr_text_extraction(image_path, expected_file):
 
 
 @pytest.mark.e2e
-@pytest.mark.parametrize("image_path,expected_file", [("tests/fixtures/sample_documents/medical_report.png", "tests/fixtures/sample_documents/medical_report.txt")])
+@pytest.mark.parametrize("image_path,expected_file", [
+    ("tests/fixtures/sample_documents/medical_report.png", "tests/fixtures/sample_documents/medical_report.txt"),
+    # Additional fixtures available for future testing (uncomment to activate):
+    # ("tests/fixtures/sample_documents/invoice.png", "tests/fixtures/sample_documents/invoice.txt"),
+    # ("tests/fixtures/sample_documents/court_order.png", "tests/fixtures/sample_documents/court_order.txt"),
+    # ("tests/fixtures/sample_documents/prescription.png", "tests/fixtures/sample_documents/prescription.txt"),
+    # ("tests/fixtures/sample_documents/mri_report.png", "tests/fixtures/sample_documents/mri_report.txt"),
+    # ("tests/fixtures/sample_documents/visura_catastale.png", "tests/fixtures/sample_documents/visura_catastale.txt"),
+])
 def test_all_tasks_executed(image_path, expected_file):
     """
     Verify all extraction tasks are executed.

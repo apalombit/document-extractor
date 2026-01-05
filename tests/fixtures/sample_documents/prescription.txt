@@ -1,0 +1,3 @@
+author_date: {'authors': ['Anna Ludwig'], 'date': '2024-10-29'}
+keywords: {'keywords': ['Prescription', 'Medication', 'Ibuprofen', 'NSAIDs']}
+document_type: {'document_type': 'medical'}

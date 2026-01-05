@@ -1,12 +1,16 @@
 """Configuration settings for Document Extractor MVP"""
 
 CONFIG = {
-    "llm": { 
+    "llm": {
         "model": "llama3.2:3b",
         "temperature": 0.0,
         "max_tokens": 500,
-        "max_conversation_turns": 3,  # Limit for multi-turn loops
-        "enable_critique": False       # Enable self-critique step
+        "max_conversation_turns": 5,   # Limit for multi-turn loops
+        "enable_critique": True,       # Enable self-critique step
+        "enable_web_keyword_expansion": False,  # Enable web-based keyword expansion
+        "web_search_timeout": 10,        # Timeout in seconds per URL fetch
+        "web_search_max_results": 5,    # Maximum number of search results to process
+        "web_search_max_text_length": 2000  # Maximum characters to extract from webpage
     },
     "ocr": {
         "engine": "easyocr",  # Options: easyocr, tesseract, paddleocr
