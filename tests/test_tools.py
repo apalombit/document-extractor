@@ -195,22 +195,24 @@ class TestFetchWebpageText:
 
         # Use a reliable, simple webpage
         url = "https://example.com"
-        text = fetch_webpage_text(url)
+        text, error = fetch_webpage_text(url)
 
-        # Should return some text
+        # Should return some text and no error
         assert isinstance(text, str)
+        assert error is None
         # example.com should have some content
-        # (might be empty if network issue, but structure should be correct)
+        assert len(text) > 0
 
     def test_fetch_webpage_text_invalid_url(self):
         """Test fetching text from invalid URL"""
         from llm.tools import fetch_webpage_text
 
         url = "https://this-domain-definitely-does-not-exist-12345.com"
-        text = fetch_webpage_text(url)
+        text, error = fetch_webpage_text(url)
 
-        # Should handle gracefully and return empty string
+        # Should handle gracefully and return empty string with error
         assert text == ""
+        assert error is not None
 
     def test_fetch_webpage_text_with_timeout(self):
         """Test fetch with custom timeout"""
@@ -218,10 +220,11 @@ class TestFetchWebpageText:
 
         # Very short timeout should likely fail
         url = "https://example.com"
-        text = fetch_webpage_text(url, timeout=0.001)
+        text, error = fetch_webpage_text(url, timeout=0.001)
 
-        # Should return empty string on timeout
+        # Should return empty string on timeout with error
         assert isinstance(text, str)
+        assert text == "" or error is None  # Either timed out or got result
 
 
 class TestExtractKeywordsFromText:

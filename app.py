@@ -74,6 +74,40 @@ def display_task_results(task_name: str, task_label: str, icon: str, results: di
                         for source in result.get("sources", []):
                             st.markdown(f"- {source}")
 
+                    # Show attempted URLs for debugging
+                    if result.get("attempted_urls"):
+                        with st.expander(f"🔗 URLs attempted ({len(result.get('attempted_urls', []))})"):
+                            for url in result.get("attempted_urls", []):
+                                st.code(url)
+
+                    # Show fetch errors for debugging
+                    if result.get("fetch_errors"):
+                        with st.expander(f"⚠️ Fetch errors ({len(result.get('fetch_errors', []))})"):
+                            for err in result.get("fetch_errors", []):
+                                st.warning(f"{err.get('url')}: {err.get('error')}")
+
+                    # Show debug info if available
+                    if result.get("debug_info"):
+                        with st.expander("🐛 Debug Info"):
+                            debug = result["debug_info"]
+                            st.write(f"**Query used:** `{debug.get('query_used', 'N/A')}`")
+                            if "raw_results_count" in debug:
+                                st.write(f"**Raw results from search:** {debug.get('raw_results_count')}")
+                                st.write(f"**After filtering blocked domains:** {debug.get('filtered_count')}")
+                            if "pages_with_keywords" in debug:
+                                st.write(f"**Pages that yielded keywords:** {debug.get('pages_with_keywords')}")
+                            # Show blocked URLs if any
+                            if debug.get("blocked_urls"):
+                                st.write(f"**URLs blocked:** {len(debug.get('blocked_urls', []))}")
+                                for blocked in debug.get("blocked_urls", []):
+                                    st.warning(f"`{blocked.get('url', 'N/A')}` - blocked by: `{blocked.get('matched_domain', 'N/A')}`")
+                            if "reason" in debug:
+                                st.info(debug.get("reason"))
+                            if "exception_type" in debug:
+                                st.error(f"**Exception:** {debug.get('exception_type')}: {debug.get('exception_message')}")
+                            if "traceback" in debug:
+                                st.code(debug.get("traceback"))
+
                 if idx < len(tool_calls) - 1:
                     st.divider()
 
@@ -86,6 +120,31 @@ def display_task_results(task_name: str, task_label: str, icon: str, results: di
                 st.warning(issue)
             st.write("**Extracted values that failed grounding:**")
             st.code(json.dumps(results, indent=2))
+
+    st.divider()
+
+
+def display_task_error(task_name: str, task_label: str, icon: str, validation: dict):
+    """Display error state for a failed task."""
+    st.subheader(f"{icon} {task_label}")
+    st.error("❌ Extraction failed")
+
+    if validation.get("grounding_issues"):
+        st.write("**Error details:**")
+        for issue in validation["grounding_issues"]:
+            st.code(issue)
+    else:
+        st.warning("No error details available")
+
+    # Show raw LLM response if available (helps debug JSON parse errors)
+    if validation.get("raw_response"):
+        with st.expander("🔍 Raw LLM Response (failed to parse)"):
+            st.code(validation["raw_response"])
+
+    # Show full traceback if available
+    if validation.get("traceback"):
+        with st.expander("🐛 Full Exception Traceback"):
+            st.code(validation["traceback"])
 
     st.divider()
 
@@ -160,7 +219,7 @@ if uploaded_file:
                 # Display extracted information
                 st.subheader("Extracted Information")
 
-                # Author & Date
+                # Author & Date - always show
                 if workflow_results["author_date"]:
                     display_task_results(
                         task_name="author_date",
@@ -170,8 +229,15 @@ if uploaded_file:
                         validation=workflow_results["validation"]["author_date"],
                         tool_calls=workflow_results.get("tool_calls", {}).get("author_date", [])
                     )
+                else:
+                    display_task_error(
+                        task_name="author_date",
+                        task_label="Author & Date",
+                        icon="📄",
+                        validation=workflow_results["validation"]["author_date"]
+                    )
 
-                # Keywords
+                # Keywords - always show
                 if workflow_results["keywords"]:
                     display_task_results(
                         task_name="keywords",
@@ -181,8 +247,15 @@ if uploaded_file:
                         validation=workflow_results["validation"]["keywords"],
                         tool_calls=workflow_results.get("tool_calls", {}).get("keywords", [])
                     )
+                else:
+                    display_task_error(
+                        task_name="keywords",
+                        task_label="Keywords",
+                        icon="🔑",
+                        validation=workflow_results["validation"]["keywords"]
+                    )
 
-                # Document Type
+                # Document Type - always show
                 if workflow_results["document_type"]:
                     display_task_results(
                         task_name="document_type",
@@ -191,6 +264,13 @@ if uploaded_file:
                         results=workflow_results["document_type"],
                         validation=workflow_results["validation"]["document_type"],
                         tool_calls=workflow_results.get("tool_calls", {}).get("document_type", [])
+                    )
+                else:
+                    display_task_error(
+                        task_name="document_type",
+                        task_label="Document Type",
+                        icon="📋",
+                        validation=workflow_results["validation"]["document_type"]
                     )
 
                 # Export options

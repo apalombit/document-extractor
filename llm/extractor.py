@@ -1,5 +1,7 @@
 """LLM-based information extraction from OCR text"""
 import json
+import traceback
+from json_repair import repair_json
 from typing import Tuple, Dict
 from config import CONFIG
 from llm.ollama_provider import OllamaProvider
@@ -349,8 +351,18 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
                     turn += 1
                 else:
                     # Got final text response
-                    # Parse JSON response
-                    result = json.loads(response["content"])
+                    raw_content = response["content"]
+                    try:
+                        result = json.loads(repair_json(raw_content))
+                    except json.JSONDecodeError as e:
+                        # Return error with raw response for debugging
+                        return {}, {
+                            "valid_json": False,
+                            "grounding_issues": [f"JSON parse error: {str(e)}"],
+                            "raw_response": raw_content,
+                            "traceback": traceback.format_exc(),
+                            "confidence": "low"
+                        }, tool_calls
 
                     # Apply optional critique step (and track any tool calls made during critique)
                     result, critique_tool_calls = self._apply_critique_step(result, ocr_text, task)
@@ -370,9 +382,12 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
 
         except json.JSONDecodeError as e:
             # Return error state with low confidence
+            raw = response.get("content", "") if 'response' in dir() else ""
             return {}, {
                 "valid_json": False,
                 "grounding_issues": [f"JSON parse error: {str(e)}"],
+                "raw_response": raw,
+                "traceback": traceback.format_exc(),
                 "confidence": "low"
             }, tool_calls
         except Exception as e:
@@ -380,6 +395,7 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
             return {}, {
                 "valid_json": False,
                 "grounding_issues": [f"Error: {str(e)}"],
+                "traceback": traceback.format_exc(),
                 "confidence": "low"
             }, tool_calls
     
@@ -559,7 +575,7 @@ Answer ONLY as in RESPONSE FORMAT with NO OTHER COMMENT added.
                     turn += 1
                 else:
                     # Got final critique response
-                    improved_result = json.loads(response["content"])
+                    improved_result = json.loads(repair_json(response["content"]))
                     return improved_result, tool_calls
 
             # Max turns exceeded in critique - return original

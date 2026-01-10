@@ -114,7 +114,7 @@ def extract_urls_from_search_results(search_results: str, limit: int = 5) -> lis
     return urls[:limit]
 
 
-def fetch_webpage_text(url: str, timeout: int = None) -> str:
+def fetch_webpage_text(url: str, timeout: int = None) -> tuple:
     """
     Fetch and extract text from a webpage.
 
@@ -123,12 +123,9 @@ def fetch_webpage_text(url: str, timeout: int = None) -> str:
         timeout: Request timeout in seconds (uses config if not specified)
 
     Returns:
-        Cleaned text content (max length from config)
-
-    Examples:
-        >>> text = fetch_webpage_text("https://example.com")
-        >>> isinstance(text, str)
-        True
+        Tuple of (text, error):
+        - (text, None) on success
+        - ("", error_message) on failure
     """
     import logging
     import requests
@@ -141,10 +138,11 @@ def fetch_webpage_text(url: str, timeout: int = None) -> str:
     max_length = CONFIG["llm"]["web_search_max_text_length"]
 
     try:
+        # Use realistic browser User-Agent to avoid 403 blocks
         response = requests.get(
             url,
             timeout=timeout,
-            headers={'User-Agent': 'Mozilla/5.0 (compatible; DocumentExtractor/1.0)'}
+            headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         )
         response.raise_for_status()
 
@@ -159,11 +157,21 @@ def fetch_webpage_text(url: str, timeout: int = None) -> str:
 
         # Clean and limit length
         text = ' '.join(text.split())  # Normalize whitespace
-        return text[:max_length]
+        return text[:max_length], None
 
+    except requests.exceptions.HTTPError as e:
+        error = f"HTTP {e.response.status_code}" if e.response else "HTTP error"
+        logging.warning(f"Failed to fetch {url}: {error}")
+        return "", error
+    except requests.exceptions.Timeout:
+        logging.warning(f"Timeout fetching {url}")
+        return "", "Timeout"
+    except requests.exceptions.ConnectionError:
+        logging.warning(f"Connection error for {url}")
+        return "", "Connection error"
     except Exception as e:
         logging.warning(f"Failed to fetch {url}: {str(e)}")
-        return ""
+        return "", str(e)[:50]
 
 
 def extract_keywords_from_text(text: str, max_keywords: int = 5) -> list:
@@ -249,10 +257,9 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
         }
     """
     import logging
-    from duckduckgo_search import DDGS
     from config import CONFIG
 
-    # Input validation
+    # Input validation FIRST (before importing optional dependency)
     if not keywords or not isinstance(keywords, list) or len(keywords) == 0:
         return {
             "original": keywords or [],
@@ -262,17 +269,35 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
             "message": "Invalid or empty keywords list"
         }
 
+    # Import AFTER validation (only when actually needed)
+    from ddgs import DDGS
+
     # Get config values
     max_results = CONFIG["llm"]["web_search_max_results"]
+    blocked_domains = CONFIG["llm"].get("web_search_blocked_domains",
+                                         ['zhihu.com', 'baidu.com', 'weibo.com', 'qq.com', 'csdn.net'])
 
     # Combine keywords into search query
     query = " ".join(keywords)
     logging.info(f"Searching web for: {query}")
 
     try:
-        # Perform DuckDuckGo search
+        # Perform DuckDuckGo search (new ddgs package works well without region)
         with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
+            raw_results = list(ddgs.text(query, max_results=max_results * 2))
+
+            # Filter out blocked domains and track what's blocked
+            results = []
+            blocked_urls = []
+            for r in raw_results:
+                url = r.get('href') or r.get('link') or ''
+                matched = [d for d in blocked_domains if d in url]
+                if matched:
+                    blocked_urls.append({"url": url, "matched_domain": matched[0]})
+                else:
+                    results.append(r)
+                    if len(results) >= max_results:
+                        break
 
         logging.info(f"Found {len(results)} search results")
 
@@ -281,25 +306,38 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
                 "original": keywords,
                 "web_keywords": [],
                 "sources": [],
+                "attempted_urls": [],
+                "fetch_errors": [],
                 "status": "failed",
-                "message": "No search results found"
+                "message": "No search results found" if len(raw_results) == 0 else f"All {len(raw_results)} results were blocked domains",
+                "debug_info": {
+                    "query_used": query,
+                    "raw_results_count": len(raw_results),
+                    "filtered_count": 0,
+                    "blocked_urls": blocked_urls,
+                    "reason": "DuckDuckGo returned no results (may be rate limited or query too specific)" if len(raw_results) == 0 else f"All {len(raw_results)} results matched blocked domains"
+                }
             }
 
         # Extract keywords from each result
         web_keywords = []
         sources = []
+        attempted_urls = []  # Track all URLs we tried
+        fetch_errors = []    # Track fetch failures for debugging
 
         for result in results:
             url = result.get('href') or result.get('link')
             if not url:
                 continue
 
+            attempted_urls.append(url)
             logging.info(f"Fetching: {url}")
 
             # Fetch webpage text (uses config timeout)
-            text = fetch_webpage_text(url)
+            text, fetch_error = fetch_webpage_text(url)
 
             if not text:
+                fetch_errors.append({"url": url, "error": fetch_error or "Empty response"})
                 continue
 
             # Extract keywords from text
@@ -308,6 +346,8 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
             if page_keywords:
                 web_keywords.extend(page_keywords)
                 sources.append(url)
+            else:
+                fetch_errors.append({"url": url, "error": "Fetched but no keywords extracted"})
 
         # Deduplicate and clean
         web_keywords = list(set([k.lower().strip() for k in web_keywords if k.strip()]))
@@ -329,16 +369,34 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
             "original": keywords,
             "web_keywords": web_keywords,
             "sources": sources,
+            "attempted_urls": attempted_urls,
+            "fetch_errors": fetch_errors,
             "status": status,
-            "message": message
+            "message": message,
+            "debug_info": {
+                "query_used": query,
+                "raw_results_count": len(raw_results),
+                "filtered_count": len(results),
+                "blocked_urls": blocked_urls,
+                "pages_with_keywords": len(sources)
+            }
         }
 
     except Exception as e:
+        import traceback
         logging.error(f"Web search failed: {str(e)}")
         return {
             "original": keywords,
             "web_keywords": [],
             "sources": [],
+            "attempted_urls": [],
+            "fetch_errors": [],
             "status": "failed",
-            "message": f"Web search error: {str(e)}"
+            "message": f"Web search error: {str(e)}",
+            "debug_info": {
+                "query_used": query if 'query' in dir() else " ".join(keywords),
+                "exception_type": type(e).__name__,
+                "exception_message": str(e),
+                "traceback": traceback.format_exc()
+            }
         }

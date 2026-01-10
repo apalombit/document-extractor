@@ -1,6 +1,7 @@
 """Ollama LLM provider implementation"""
 import json
 import ollama
+from json_repair import repair_json
 from typing import Dict, List, Optional
 from llm.provider import LLMProvider
 
@@ -61,9 +62,31 @@ class OllamaProvider(LLMProvider):
                 "tool_calls": response['message']['tool_calls']
             }
         else:
+            content = response['message']['content']
+
+            # Check if the text response is actually a tool call formatted as JSON
+            # (some smaller models output tool calls as text instead of using tool_calls)
+            if content.strip().startswith('{') and tools:
+                try:
+                    parsed = json.loads(repair_json(content))
+                    # Check if it looks like a tool call (has "name" and "parameters" keys)
+                    if isinstance(parsed, dict) and "name" in parsed and "parameters" in parsed:
+                        # Convert text tool call to proper format
+                        return {
+                            "type": "tool_call",
+                            "tool_calls": [{
+                                "function": {
+                                    "name": parsed["name"],
+                                    "arguments": parsed["parameters"]
+                                }
+                            }]
+                        }
+                except json.JSONDecodeError:
+                    pass  # Not valid JSON, treat as regular text
+
             return {
                 "type": "text",
-                "content": response['message']['content']
+                "content": content
             }
 
     def add_tool_result(self, tool_name: str, result: Dict):
