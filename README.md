@@ -1,4 +1,4 @@
-# Document Extractor MVP
+# Document Extractor
 
 Automated extraction of structured information from document images (PNG).
 
@@ -104,7 +104,7 @@ print(results["validation"]["author_date"]["confidence"])  # "high" or "low"
 
 See `docs/WORKFLOW.md` for detailed documentation.
 
-## MVP Features
+## Features
 
 - Upload PNG document
 - OCR text extraction (EasyOCR)
@@ -115,3 +115,5 @@ See `docs/WORKFLOW.md` for detailed documentation.
 - Validation & confidence scoring
 - Export to CSV or copyable text
 - Programmatic API for automation
+- Chat with document (RAG-powered Q&A)
+- On-topic guardrail for chat queries

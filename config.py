@@ -26,5 +26,21 @@ CONFIG = {
     "output": {
         "format": "json",
         "validation_enabled": True
+    },
+    "chat": {
+        "model": "llama3.2:3b",
+        "temperature": 0.3,          # Slightly more creative than extraction
+        "max_tokens": 1000,          # Longer responses for explanations
+        "max_history_turns": 10,     # Limit conversation memory
+        "use_rag": True,             # Enable RAG retrieval
+        "rag_method": "embedding",   # "keyword" or "embedding"
+        "rag_chunk_size": 200,       # Characters per chunk
+        "rag_top_k": 3,              # Number of chunks to retrieve
+        "rag_embedding_model": "all-MiniLM-L6-v2",  # SentenceTransformer model
+        "rag_similarity_threshold": 0.3,  # Minimum cosine similarity for results
+        # Guardrail settings
+        "use_guardrail": True,           # Enable on-topic guardrail
+        "guardrail_model": "facebook/bart-large-mnli",  # Zero-shot classifier
+        "guardrail_threshold": 0.3,      # Minimum score to be considered on-topic
     }
 }

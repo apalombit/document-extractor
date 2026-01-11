@@ -8,6 +8,8 @@ from pathlib import Path
 from io import BytesIO
 from pipeline.extraction_workflow import ExtractionWorkflow
 from utils.file_handler import FileHandler
+from chat.context import DocumentContext
+from chat.chat_handler import ChatHandler
 
 
 def display_task_results(task_name: str, task_label: str, icon: str, results: dict, validation: dict, tool_calls: list = None):
@@ -182,7 +184,15 @@ else:
         st.error("Test images directory not found: tests/fixtures/sample_documents/")
 
 if uploaded_file:
-    st.image(uploaded_file, caption="Document Preview", width=300)
+    # Thumbnail with option to expand
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        expand_image = st.checkbox("Full size", value=False)
+
+    if expand_image:
+        st.image(uploaded_file, caption="Document Preview (Full Size)")
+    else:
+        st.image(uploaded_file, caption="Document Preview", width=300)
 
     if st.button("Analyze Document"):
         try:
@@ -213,7 +223,7 @@ if uploaded_file:
                         st.stop()  # Can't continue without OCR text
 
                 # Display OCR text
-                with st.expander("Raw OCR Text"):
+                with st.expander("Raw OCR Text", expanded=True):
                     st.text(workflow_results["ocr_text"])
 
                 # Display extracted information
@@ -308,6 +318,14 @@ if uploaded_file:
                     mime="text/csv"
                 )
 
+                # Store workflow results in session state for chat
+                st.session_state.workflow_results = workflow_results
+
+                # Initialize chat handler
+                context = DocumentContext.from_workflow_results(workflow_results)
+                st.session_state.chat_handler = ChatHandler(context)
+                st.session_state.chat_messages = []
+
             finally:
                 # Clean up temp file
                 Path(tmp_path).unlink(missing_ok=True)
@@ -317,3 +335,71 @@ if uploaded_file:
             st.error(f"❌ Critical error: {str(e)}")
             with st.expander("🐛 Critical Error Details"):
                 st.code(traceback.format_exc())
+
+# Chat section - available after document is analyzed
+if "chat_handler" in st.session_state and st.session_state.chat_handler is not None:
+    st.divider()
+    st.subheader("Chat with Document")
+
+    # Two-column layout: OCR reference on left, chat on right
+    ocr_col, chat_col = st.columns([1, 1])
+
+    with ocr_col:
+        st.caption("OCR Text Reference")
+        # Show OCR text in a scrollable container
+        if "workflow_results" in st.session_state:
+            ocr_text = st.session_state.workflow_results.get("ocr_text", "")
+            st.text_area("", ocr_text, height=400, disabled=True, label_visibility="collapsed")
+
+    with chat_col:
+        st.caption("Ask questions about the analyzed document")
+
+        # Initialize chat messages if not present
+        if "chat_messages" not in st.session_state:
+            st.session_state.chat_messages = []
+
+        # Chat container with fixed height for scrolling
+        chat_container = st.container(height=350)
+
+        with chat_container:
+            # Display chat history
+            for message in st.session_state.chat_messages:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+
+        # Chat input
+        if prompt := st.chat_input("Ask about this document..."):
+            # Add user message to chat history
+            st.session_state.chat_messages.append({"role": "user", "content": prompt})
+
+            # Get response from chat handler
+            with st.spinner("Thinking..."):
+                response = st.session_state.chat_handler.chat(prompt)
+
+            # Add assistant response to chat history
+            st.session_state.chat_messages.append({"role": "assistant", "content": response})
+            st.rerun()
+
+        # Clear chat button
+        if st.session_state.chat_messages:
+            if st.button("Clear Chat", type="secondary"):
+                st.session_state.chat_messages = []
+                st.session_state.chat_handler.clear_history()
+                st.rerun()
+
+    # Debug section (full width below)
+    with st.expander("Debug: Chat Context"):
+        debug_info = st.session_state.chat_handler.get_debug_info()
+        st.write("**Chat State:**")
+        st.json(debug_info)
+
+        st.write("**Messages sent to LLM:**")
+        provider_messages = st.session_state.chat_handler.get_provider_messages()
+        for i, msg in enumerate(provider_messages):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            # Truncate long content for display
+            preview = content[:500] + "..." if len(content) > 500 else content
+            with st.container():
+                st.markdown(f"**[{i+1}] {role.upper()}**")
+                st.code(preview, language=None)

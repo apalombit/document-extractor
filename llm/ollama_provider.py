@@ -33,9 +33,12 @@ class OllamaProvider(LLMProvider):
             - {"type": "text", "content": str} for regular responses
             - {"type": "tool_call", "tool_calls": list} for tool invocations
         """
-        # Initialize conversation with system prompt if first turn
+        # Set or update system prompt (may change each turn for RAG context)
         if not self.messages:
             self.messages.append({"role": "system", "content": system_prompt})
+        else:
+            # Update system prompt content (first message is always system)
+            self.messages[0]["content"] = system_prompt
 
         # Add user prompt if provided (empty on subsequent turns)
         if user_prompt:
