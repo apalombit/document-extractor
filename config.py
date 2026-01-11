@@ -12,7 +12,10 @@ CONFIG = {
         "web_search_max_results": 5,    # Maximum number of search results to process
         "web_search_max_text_length": 2000,  # Maximum characters to extract from webpage
         "web_search_region": "it-it",   # DuckDuckGo region (it-it for Italian, us-en for US English)
-        "web_search_blocked_domains": ["zhihu.com", "baidu.com", "weibo.com", "qq.com", "csdn.net"]
+        "web_search_blocked_domains": ["zhihu.com", "baidu.com", "weibo.com", "qq.com", "csdn.net"],
+        # PII guard settings for web search
+        "pii_guard_enabled": True,           # Filter PII from keywords before web search
+        "pii_guard_threshold": 0.5,          # Minimum confidence to flag as PII
     },
     "ocr": {
         "engine": "easyocr",  # Options: easyocr, tesseract, paddleocr

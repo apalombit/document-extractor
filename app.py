@@ -60,11 +60,20 @@ def display_task_results(task_name: str, task_label: str, icon: str, results: di
                         st.success(f"✅ {result.get('message')}")
                     elif status == "partial_success":
                         st.warning(f"⚠️ {result.get('message')}")
+                    elif status == "blocked":
+                        st.error(f"🛡️ {result.get('message')}")
                     else:
                         st.error(f"❌ {result.get('message')}")
 
                     # Show original keywords
                     st.write(f"**Original keywords:** {', '.join(result.get('original', []))}")
+
+                    # Show PII-filtered keywords if any
+                    if result.get("pii_filtered"):
+                        st.warning(f"🛡️ **PII filtered:** {', '.join(result.get('pii_filtered', []))}")
+                        with st.expander("PII Detection Details"):
+                            for detail in result.get("pii_details", []):
+                                st.write(f"- `{detail.get('keyword')}`: {detail.get('entity_type')} detected (confidence: {detail.get('confidence', 0):.2f})")
 
                     # Show web keywords if any
                     if result.get("web_keywords"):

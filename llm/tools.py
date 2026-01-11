@@ -235,6 +235,10 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
     keywords are consolidated and returned to help validate and expand the original
     keyword list.
 
+    PII Protection: Before searching, keywords are filtered through a PII guard
+    to prevent personal information (names, phone numbers, emails, addresses)
+    from being sent to external web services.
+
     Args:
         keywords: Initial list of keywords from document
 
@@ -245,6 +249,7 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
             - sources (list): List of URLs successfully analyzed
             - status (str): "success", "partial_success", or "failed"
             - message (str): Explanation if partial/failed
+            - pii_filtered (list): Keywords removed due to PII (if any)
 
     Examples:
         >>> expand_keywords_with_web_search(["medical", "blood", "test"])
@@ -269,6 +274,31 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
             "message": "Invalid or empty keywords list"
         }
 
+    # PII Guard: Filter out keywords containing personal information
+    pii_filtered = []
+    pii_details = []
+    safe_keywords = keywords
+
+    if CONFIG["llm"].get("pii_guard_enabled", True):
+        from llm.pii_guard import PIIGuard
+        pii_guard = PIIGuard()
+        safe_keywords, pii_filtered, pii_details = pii_guard.filter_keywords(keywords)
+
+        if pii_filtered:
+            logging.warning(f"PII guard filtered {len(pii_filtered)} keywords: {pii_filtered}")
+
+        # If all keywords were filtered, return early
+        if not safe_keywords:
+            return {
+                "original": keywords,
+                "web_keywords": [],
+                "sources": [],
+                "status": "blocked",
+                "message": "All keywords contained PII and were filtered for privacy",
+                "pii_filtered": pii_filtered,
+                "pii_details": pii_details
+            }
+
     # Import AFTER validation (only when actually needed)
     from ddgs import DDGS
 
@@ -277,8 +307,8 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
     blocked_domains = CONFIG["llm"].get("web_search_blocked_domains",
                                          ['zhihu.com', 'baidu.com', 'weibo.com', 'qq.com', 'csdn.net'])
 
-    # Combine keywords into search query
-    query = " ".join(keywords)
+    # Combine SAFE keywords into search query (PII already filtered)
+    query = " ".join(safe_keywords)
     logging.info(f"Searching web for: {query}")
 
     try:
@@ -365,7 +395,7 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
 
         logging.info(f"Web search complete: {status} - {message}")
 
-        return {
+        result = {
             "original": keywords,
             "web_keywords": web_keywords,
             "sources": sources,
@@ -382,10 +412,21 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
             }
         }
 
+        # Add PII info if any keywords were filtered
+        if pii_filtered:
+            result["pii_filtered"] = pii_filtered
+            result["pii_details"] = pii_details
+            result["debug_info"]["pii_guard"] = {
+                "keywords_filtered": len(pii_filtered),
+                "keywords_used": len(safe_keywords)
+            }
+
+        return result
+
     except Exception as e:
         import traceback
         logging.error(f"Web search failed: {str(e)}")
-        return {
+        result = {
             "original": keywords,
             "web_keywords": [],
             "sources": [],
@@ -394,9 +435,16 @@ def expand_keywords_with_web_search(keywords: list) -> Dict:
             "status": "failed",
             "message": f"Web search error: {str(e)}",
             "debug_info": {
-                "query_used": query if 'query' in dir() else " ".join(keywords),
+                "query_used": query if 'query' in dir() else " ".join(safe_keywords),
                 "exception_type": type(e).__name__,
                 "exception_message": str(e),
                 "traceback": traceback.format_exc()
             }
         }
+
+        # Add PII info even on failure
+        if pii_filtered:
+            result["pii_filtered"] = pii_filtered
+            result["pii_details"] = pii_details
+
+        return result
