@@ -45,5 +45,16 @@ CONFIG = {
         "use_guardrail": True,           # Enable on-topic guardrail
         "guardrail_model": "facebook/bart-large-mnli",  # Zero-shot classifier
         "guardrail_threshold": 0.3,      # Minimum score to be considered on-topic
+        # Jailbreak guard settings
+        "use_jailbreak_guard": True,
+        "jailbreak_model": "deepset/deberta-v3-base-injection",
+        "jailbreak_threshold": 0.7,      # Higher threshold to reduce false positives
+        # Hallucination guard settings
+        "use_hallucination_guard": True,
+        "hallucination_nli_model": "GuardrailsAI/finetuned_nli_provenance",
+        "hallucination_threshold": 0.4,  # Minimum entailment score (lowered for leniency)
+        "hallucination_top_k": 3,        # Number of source chunks to check per sentence
+        "hallucination_similarity_threshold": 0.25,  # Minimum similarity to consider source relevant
+        "hallucination_lenient": True,   # If True, show response with warnings instead of blocking
     }
 }
